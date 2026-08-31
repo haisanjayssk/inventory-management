@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: mes_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: inventory_management_db
+    volumes:
+      - mongo_data:/data/db
+    command: ["--bind_ip_all"]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mes_backend
+    restart: always
+    ports:
+      - "5001:5001"
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - MONGO_URI=mongodb://mongodb:27017/
+      - MONGO_DB_NAME=inventory_management_db
+      - JWT_SECRET_KEY=mes-jwt-secret-key-battery-electronic-2026
+      - SECRET_KEY=mes-super-secret-production-inventory-key-2026
+      - CORS_ORIGINS=*
+    depends_on:
+      - mongodb
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mes_frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
