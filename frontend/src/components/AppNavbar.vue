@@ -67,6 +67,76 @@
     <!-- Modals -->
     <NfcReaderModal v-model="showNfcModal" @locationResolved="onLocationResolved" />
     <BarcodeScannerModal v-model="showBarcodeModal" @scan="onBarcodeScanned" />
+
+    <!-- Location Operation Chooser Modal (Receive vs Issue) -->
+    <Modal v-model="showActionModal" :title="`Location ${selectedActionLoc?.location_code}`" maxWidth="max-w-md">
+      <template #icon>
+        <MapPin class="w-5 h-5 text-emerald-400" />
+      </template>
+
+      <div v-if="selectedActionLoc" class="space-y-4">
+        <!-- Location Header Summary -->
+        <div class="p-3.5 bg-slate-950 rounded-xl border border-slate-800 text-xs flex items-center justify-between">
+          <div>
+            <span class="text-[10px] uppercase font-bold text-slate-500 block">Warehouse Bin</span>
+            <span class="text-sm font-black font-mono text-white">{{ selectedActionLoc.location_code }}</span>
+          </div>
+          <div class="text-right text-[11px] text-slate-400 font-mono">
+            <div>Wh: <span class="text-slate-200">{{ selectedActionLoc.warehouse_code }}</span> | Bay {{ selectedActionLoc.bay_number }}</div>
+            <div>Rack {{ selectedActionLoc.rack_number }} | Sec {{ selectedActionLoc.section_code }}</div>
+          </div>
+        </div>
+
+        <p class="text-xs text-slate-300 font-semibold text-center">
+          What operation would you like to perform for this location?
+        </p>
+
+        <!-- Two Action Choices: Receive vs Issue -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          <!-- Choice 1: Receive Material -->
+          <button
+            @click="navigateToAction('receive')"
+            class="group p-4 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-700/50 hover:border-emerald-500 rounded-2xl text-left transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between space-y-3 shadow-lg shadow-emerald-950/30"
+          >
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors">
+              <Download class="w-5 h-5" />
+            </div>
+            <div>
+              <h4 class="text-sm font-black text-white group-hover:text-emerald-300 transition-colors">
+                Receive Material
+              </h4>
+              <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                Intake & deposit incoming parts or battery cells into this bin.
+              </p>
+            </div>
+            <div class="text-xs font-bold text-emerald-400 flex items-center gap-1 pt-1">
+              <span>Start Receive &rarr;</span>
+            </div>
+          </button>
+
+          <!-- Choice 2: Issue Material -->
+          <button
+            @click="navigateToAction('issue')"
+            class="group p-4 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-700/50 hover:border-amber-500 rounded-2xl text-left transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between space-y-3 shadow-lg shadow-amber-950/30"
+          >
+            <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 group-hover:bg-amber-500 group-hover:text-slate-950 transition-colors">
+              <Upload class="w-5 h-5" />
+            </div>
+            <div>
+              <h4 class="text-sm font-black text-white group-hover:text-amber-300 transition-colors">
+                Issue Stock
+              </h4>
+              <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                Pick & deduct stored parts for production work orders.
+              </p>
+            </div>
+            <div class="text-xs font-bold text-amber-400 flex items-center gap-1 pt-1">
+              <span>Start Issue &rarr;</span>
+            </div>
+          </button>
+        </div>
+      </div>
+    </Modal>
   </header>
 </template>
 
@@ -75,7 +145,9 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
-import { Menu, Cpu, Radio, QrCode, LogOut } from 'lucide-vue-next'
+import { Menu, Cpu, Radio, QrCode, LogOut, MapPin, Download, Upload } from 'lucide-vue-next'
+import locationsApi from '@/api/locations'
+import Modal from './Modal.vue'
 import NfcReaderModal from './NfcReaderModal.vue'
 import BarcodeScannerModal from './BarcodeScannerModal.vue'
 
@@ -87,17 +159,55 @@ const router = useRouter()
 
 const showNfcModal = ref(false)
 const showBarcodeModal = ref(false)
+const showActionModal = ref(false)
+const selectedActionLoc = ref(null)
 
 const onLocationResolved = (loc) => {
-  toast.success(`Scanned Location: ${loc.location_code}`)
-  router.push({ path: '/locations', query: { code: loc.location_code } })
+  selectedActionLoc.value = loc
+  showActionModal.value = true
 }
 
-const onBarcodeScanned = (code) => {
-  if (code.startsWith('CELL-')) {
-    router.push({ path: '/cells', query: { search: code } })
+const navigateToAction = (type) => {
+  if (!selectedActionLoc.value) return
+  const locCode = selectedActionLoc.value.location_code
+  showActionModal.value = false
+  if (type === 'receive') {
+    toast.success(`Location ${locCode} selected → Opening Receive form`)
+    router.push({ path: '/stock-operations', query: { tab: 'receive', location: locCode, t: Date.now() } })
   } else {
-    toast.info(`Scanned Code: ${code}`)
+    toast.success(`Location ${locCode} selected → Opening Issue form`)
+    router.push({ path: '/stock-operations', query: { tab: 'issue', location: locCode, t: Date.now() } })
   }
+}
+
+const onBarcodeScanned = async (code) => {
+  const cleanCode = (code || '').trim()
+  if (!cleanCode) return
+
+  if (cleanCode.startsWith('CELL-')) {
+    router.push({ path: '/cells', query: { search: cleanCode } })
+    return
+  }
+
+  // Attempt to resolve as warehouse location
+  try {
+    const locTag = cleanCode.replace('inventory://location/', '').trim()
+    let locRes = null
+    try {
+      locRes = await locationsApi.getByCode(locTag)
+    } catch {
+      locRes = await locationsApi.getByNfc(cleanCode)
+    }
+    if (locRes && (locRes.data || locRes._id)) {
+      const locData = locRes.data || locRes
+      selectedActionLoc.value = locData
+      showActionModal.value = true
+      return
+    }
+  } catch (e) {
+    // If not a location, fallback to toast
+  }
+
+  toast.info(`Scanned Code: ${cleanCode}`)
 }
 </script>

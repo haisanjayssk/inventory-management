@@ -35,7 +35,7 @@
 
     <!-- TAB 1: RECEIVE MATERIAL & CELLS -->
     <div v-if="activeTab === 'receive'" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+      <div class="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h2 class="text-base font-bold text-white flex items-center gap-2">
             <Download class="w-5 h-5 text-emerald-400" />
@@ -44,17 +44,129 @@
           <p class="text-xs text-slate-400">Receive supplier batches or intake serial-tracked lithium battery cells</p>
         </div>
 
-        <span class="text-xs font-mono text-emerald-400 bg-emerald-950 px-2.5 py-1 rounded border border-emerald-800/50">
-          TYPE: {{ selectedPart?.tracking_type || 'SELECT PART' }}
-        </span>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            @click="openNfcScanner('receive_dest')"
+            class="px-3 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+          >
+            <Radio class="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+            <span>Scan NFC</span>
+          </button>
+          <button
+            type="button"
+            @click="openBarcodeScanner('receive_dest')"
+            class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+          >
+            <QrCode class="w-3.5 h-3.5 text-slate-400" />
+            <span>Scan QR</span>
+          </button>
+          <span class="text-xs font-mono text-emerald-400 bg-emerald-950 px-2.5 py-1.5 rounded-lg border border-emerald-800/50">
+            TYPE: {{ selectedPart?.tracking_type || 'SELECT PART' }}
+          </span>
+        </div>
       </div>
 
-      <form @submit.prevent="submitReceive" class="space-y-6">
+      <!-- Live Location Inventory Info Box & Quick Restock Selector -->
+      <div v-if="receiveForm.location_code" class="p-4 rounded-xl bg-slate-950/90 border transition-all"
+        :class="receiveBinInventoryList.length > 0 ? 'border-emerald-500/40 bg-gradient-to-r from-emerald-950/20 to-slate-950' : 'border-slate-800'">
+        
+        <div class="flex items-center justify-between mb-2.5">
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 rounded-full" :class="receiveBinInventoryList.length > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'"></div>
+            <span class="text-xs font-mono font-extrabold text-white uppercase tracking-wider">
+              Bin Location: <span class="text-emerald-400 font-bold font-mono">{{ receiveForm.location_code }}</span>
+            </span>
+            <span v-if="loadingReceiveStock" class="text-[11px] text-slate-400 animate-pulse">Loading bin contents...</span>
+          </div>
+
+          <span v-if="receiveBinInventoryList.length > 0" class="text-[11px] font-semibold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/60">
+            {{ receiveBinInventoryList.length }} Part{{ receiveBinInventoryList.length > 1 ? 's' : '' }} Stored Here
+          </span>
+          <span v-else-if="!loadingReceiveStock" class="text-[11px] font-semibold text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+            Empty Bin &bull; Ready for Storage
+          </span>
+        </div>
+
+        <!-- Quick 1-Click Part Selection Cards -->
+        <div v-if="receiveBinInventoryList.length > 0" class="space-y-1.5">
+          <p class="text-[11px] text-slate-400 font-semibold">Click a part below to restock / receive into this bin:</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              v-for="item in receiveBinInventoryList"
+              :key="item._id"
+              type="button"
+              @click="selectReceiveBinItem(item)"
+              class="text-left p-2.5 rounded-lg border transition-all flex items-center justify-between"
+              :class="receiveForm.part_id === item.part_id
+                ? 'bg-emerald-950/80 border-emerald-500 ring-1 ring-emerald-500/50 shadow-md text-white'
+                : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 text-slate-300'"
+            >
+              <div class="min-w-0 pr-2">
+                <div class="text-xs font-bold font-mono flex items-center gap-1.5 truncate">
+                  <span class="text-emerald-400 font-mono">[{{ item.part_code || item.part_id }}]</span>
+                  <span class="truncate">{{ item.part_name || 'Part' }}</span>
+                </div>
+                <div class="text-[10px] text-slate-400 font-mono mt-0.5">
+                  Current In-Stock: <span class="text-slate-200 font-bold font-mono">{{ item.quantity?.toLocaleString() }} {{ item.unit_of_measure || 'PCS' }}</span>
+                </div>
+              </div>
+              <div class="text-right flex-shrink-0">
+                <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold">
+                  Restock
+                </span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <form @submit.prevent="submitReceive" class="space-y-5">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <!-- Select Part -->
+          <!-- 1. Destination Location via NFC / QR Scan -->
           <div>
             <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              1. Material / Part <span class="text-rose-400">*</span>
+              1. Destination Location (NFC / QR Bin) <span class="text-rose-400">*</span>
+            </label>
+            <div class="flex gap-2">
+              <input
+                v-model="receiveForm.location_code"
+                type="text"
+                required
+                @change="handleReceiveLocationAutoFill(receiveForm.location_code)"
+                @blur="handleReceiveLocationAutoFill(receiveForm.location_code)"
+                placeholder="e.g. E11-1A"
+                class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono font-bold"
+              />
+              <button
+                type="button"
+                @click="openNfcScanner('receive_dest')"
+                class="px-3 py-2 bg-emerald-950 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-1 transition"
+                title="Scan NFC Tag"
+              >
+                <Radio class="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+                <span>NFC</span>
+              </button>
+              <button
+                type="button"
+                @click="openBarcodeScanner('receive_dest')"
+                class="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold rounded-xl flex items-center gap-1 transition"
+                title="Scan QR / Barcode"
+              >
+                <QrCode class="w-3.5 h-3.5 text-slate-400" />
+                <span>QR</span>
+              </button>
+            </div>
+            <p v-if="resolvedDestLocation" class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+              <CheckCircle2 class="w-3.5 h-3.5" />
+              Resolved: {{ resolvedDestLocation.warehouse_code }} | Bay {{ resolvedDestLocation.bay_number }} | Rack {{ resolvedDestLocation.rack_number }} | Sec {{ resolvedDestLocation.section_code }}
+            </p>
+          </div>
+
+          <!-- 2. Part to Receive -->
+          <div>
+            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+              2. Material / Part to Receive <span class="text-rose-400">*</span>
             </label>
             <select
               v-model="receiveForm.part_id"
@@ -69,10 +181,10 @@
             </select>
           </div>
 
-          <!-- Lot Selection / Creation -->
+          <!-- 3. Lot / Batch Number -->
           <div>
             <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              2. Lot / Batch Number <span class="text-rose-400">*</span>
+              3. Lot / Batch Number <span class="text-rose-400">*</span>
             </label>
             <div class="flex gap-2">
               <input
@@ -85,7 +197,7 @@
               <button
                 type="button"
                 @click="autoGenerateLot"
-                class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 rounded-xl border border-slate-700"
+                class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 rounded-xl border border-slate-700 transition"
                 title="Auto Generate Lot Code"
               >
                 Auto
@@ -93,35 +205,7 @@
             </div>
           </div>
 
-          <!-- Destination Location via NFC Scan -->
-          <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              3. Destination Warehouse Location (NFC Tag) <span class="text-rose-400">*</span>
-            </label>
-            <div class="flex gap-2">
-              <input
-                v-model="receiveForm.location_code"
-                type="text"
-                required
-                placeholder="e.g. E11-1A"
-                class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono font-bold"
-              />
-              <button
-                type="button"
-                @click="openNfcScanner('receive_dest')"
-                class="px-3.5 py-2 bg-emerald-950 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-1.5"
-              >
-                <Radio class="w-4 h-4 animate-pulse text-emerald-400" />
-                <span>Scan NFC</span>
-              </button>
-            </div>
-            <p v-if="resolvedDestLocation" class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
-              <CheckCircle2 class="w-3.5 h-3.5" />
-              Resolved: {{ resolvedDestLocation.warehouse_code }} | Bay {{ resolvedDestLocation.bay_number }} | Rack {{ resolvedDestLocation.rack_number }} | Sec {{ resolvedDestLocation.section_code }}
-            </p>
-          </div>
-
-          <!-- Reference ID (PO / GRN) -->
+          <!-- 4. Reference / PO -->
           <div>
             <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
               4. PO / Invoice Reference
@@ -132,6 +216,30 @@
               placeholder="e.g. PO-2026-10045"
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono"
             />
+          </div>
+
+          <!-- 5. Quantity to Receive (if Bulk) -->
+          <div v-if="selectedPart?.tracking_type !== 'SERIAL'" class="md:col-span-2">
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                5. Quantity to Receive (PCS) <span class="text-rose-400">*</span>
+              </label>
+              <span v-if="selectedReceiveBinItem" class="text-xs font-mono font-semibold text-emerald-400">
+                Current in Bin: <span class="font-bold underline">{{ selectedReceiveBinItem.quantity?.toLocaleString() }}</span> {{ selectedReceiveBinItem.unit_of_measure || 'PCS' }}
+              </span>
+            </div>
+            <input
+              ref="receiveQtyInputRef"
+              v-model.number="receiveForm.quantity"
+              type="number"
+              min="1"
+              required
+              placeholder="Enter quantity to receive..."
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-base text-white focus:outline-none focus:border-emerald-500 font-mono font-bold"
+            />
+            <p class="text-[11px] text-slate-400 mt-1">
+              Press <kbd class="px-1.5 py-0.5 text-[10px] bg-slate-800 text-emerald-400 rounded border border-slate-700 font-mono">Enter ↵</kbd> to confirm receive.
+            </p>
           </div>
         </div>
 
@@ -213,30 +321,18 @@
           </div>
         </div>
 
-        <!-- IF PART IS QUANTITY TRACKED -->
-        <div v-else>
-          <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-            Quantity to Receive (PCS) <span class="text-rose-400">*</span>
-          </label>
-          <input
-            v-model.number="receiveForm.quantity"
-            type="number"
-            min="1"
-            required
-            placeholder="e.g. 10000"
-            class="w-full sm:w-1/2 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono font-bold text-base"
-          />
-        </div>
-
         <!-- Submit Button -->
-        <div class="pt-4 border-t border-slate-800 flex justify-end">
+        <div class="pt-4 border-t border-slate-800 flex items-center justify-between">
+          <span class="text-xs text-slate-400 hidden sm:inline">
+            Atomic receipt with automatic inventory recording and audit logging.
+          </span>
           <button
             type="submit"
-            :disabled="submitting"
-            class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm rounded-xl shadow-lg shadow-emerald-950 flex items-center gap-2 transition disabled:opacity-50"
+            :disabled="submitting || !receiveForm.part_id || !receiveForm.lot_batch_no || !receiveForm.location_code || (!receiveForm.quantity && selectedPart?.tracking_type !== 'SERIAL')"
+            class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm rounded-xl shadow-lg shadow-emerald-950 flex items-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <CheckCircle2 class="w-5 h-5" />
-            <span>Confirm & Execute Receive</span>
+            <span>{{ submitting ? 'Processing Receive...' : 'Confirm & Execute Receive' }}</span>
           </button>
         </div>
       </form>
@@ -244,26 +340,138 @@
 
     <!-- TAB 2: ISSUE MATERIAL -->
     <div v-if="activeTab === 'issue'" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-      <div class="border-b border-slate-800 pb-4">
-        <h2 class="text-base font-bold text-white flex items-center gap-2">
-          <Upload class="w-5 h-5 text-amber-400" />
-          Material Issue for Production / Work Orders
-        </h2>
-        <p class="text-xs text-slate-400">Deduct material from verified warehouse location with negative-stock prevention</p>
+      <div class="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <Upload class="w-5 h-5 text-amber-400" />
+            Material Issue for Production / Work Orders
+          </h2>
+          <p class="text-xs text-slate-400">Deduct material from verified warehouse location with negative-stock prevention</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            @click="openNfcScanner('issue_src')"
+            class="px-3 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+          >
+            <Radio class="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+            <span>Scan NFC</span>
+          </button>
+          <button
+            type="button"
+            @click="openBarcodeScanner('issue_src')"
+            class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+          >
+            <QrCode class="w-3.5 h-3.5 text-slate-400" />
+            <span>Scan QR</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Location Inventory Info Box & Quick Part Selector -->
+      <div v-if="issueForm.location_code" class="p-4 rounded-xl bg-slate-950/90 border transition-all"
+        :class="binInventoryList.length > 0 ? 'border-amber-500/40 bg-gradient-to-r from-amber-950/20 to-slate-950' : 'border-slate-800'">
+        
+        <div class="flex items-center justify-between mb-2.5">
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 rounded-full" :class="binInventoryList.length > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></div>
+            <span class="text-xs font-mono font-extrabold text-white uppercase tracking-wider">
+              Bin Location: <span class="text-amber-400 font-bold font-mono">{{ issueForm.location_code }}</span>
+            </span>
+            <span v-if="loadingLocationStock" class="text-[11px] text-slate-400 animate-pulse">Loading bin contents...</span>
+          </div>
+
+          <span v-if="binInventoryList.length > 0" class="text-[11px] font-semibold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/60">
+            {{ binInventoryList.length }} Part{{ binInventoryList.length > 1 ? 's' : '' }} Stored Here
+          </span>
+          <span v-else-if="!loadingLocationStock" class="text-[11px] font-semibold text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/40">
+            No Bulk Parts Stored in this Bin
+          </span>
+        </div>
+
+        <!-- Quick 1-Click Part Selection Cards -->
+        <div v-if="binInventoryList.length > 0" class="space-y-1.5">
+          <p class="text-[11px] text-slate-400 font-semibold">Click a part below to issue from this bin:</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              v-for="item in binInventoryList"
+              :key="item._id"
+              type="button"
+              @click="selectBinItem(item)"
+              class="text-left p-2.5 rounded-lg border transition-all flex items-center justify-between"
+              :class="issueForm.part_id === item.part_id && issueForm.lot_id === item.lot_id
+                ? 'bg-amber-950/80 border-amber-500 ring-1 ring-amber-500/50 shadow-md text-white'
+                : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 text-slate-300'"
+            >
+              <div class="min-w-0 pr-2">
+                <div class="text-xs font-bold font-mono flex items-center gap-1.5 truncate">
+                  <span class="text-amber-400 font-mono">[{{ item.part_code || item.part_id }}]</span>
+                  <span class="truncate">{{ item.part_name || 'Part' }}</span>
+                </div>
+                <div class="text-[10px] text-slate-400 font-mono mt-0.5">
+                  Lot: <span class="text-slate-300 font-medium">{{ item.lot_batch_no || item.lot_id }}</span>
+                </div>
+              </div>
+              <div class="text-right flex-shrink-0">
+                <span class="text-xs font-bold font-mono text-emerald-400">
+                  {{ item.available_quantity?.toLocaleString() }}
+                </span>
+                <span class="text-[10px] text-slate-400 ml-1">{{ item.unit_of_measure || 'PCS' }}</span>
+              </div>
+            </button>
+          </div>
+        </div>
       </div>
 
       <form @submit.prevent="submitIssue" class="space-y-5">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <!-- Source NFC / QR Location -->
+          <div>
+            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+              1. Source Location (NFC / QR Bin) <span class="text-rose-400">*</span>
+            </label>
+            <div class="flex gap-2">
+              <input
+                v-model="issueForm.location_code"
+                type="text"
+                required
+                @change="loadLocationInventory(issueForm.location_code)"
+                @blur="loadLocationInventory(issueForm.location_code)"
+                placeholder="e.g. E11-1A"
+                class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono font-bold focus:outline-none focus:border-amber-500"
+              />
+              <button
+                type="button"
+                @click="openNfcScanner('issue_src')"
+                class="px-3.5 py-2 bg-emerald-950 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-1.5 transition"
+                title="Scan NFC Tag"
+              >
+                <Radio class="w-4 h-4 animate-pulse text-emerald-400" />
+                <span>NFC</span>
+              </button>
+              <button
+                type="button"
+                @click="openBarcodeScanner('issue_src')"
+                class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold rounded-xl flex items-center gap-1.5 transition"
+                title="Scan QR / Barcode"
+              >
+                <QrCode class="w-4 h-4 text-slate-400" />
+                <span>QR</span>
+              </button>
+            </div>
+          </div>
+
           <!-- Part -->
           <div>
             <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              1. Part <span class="text-rose-400">*</span>
+              2. Part to Issue <span class="text-rose-400">*</span>
             </label>
             <select
               v-model="issueForm.part_id"
               required
               @change="loadLotsForIssue"
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-amber-500"
             >
               <option value="" disabled>-- Select Part --</option>
               <option v-for="part in quantityPartsList" :key="part._id" :value="part._id">
@@ -275,42 +483,18 @@
           <!-- Lot -->
           <div>
             <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              2. Lot / Batch <span class="text-rose-400">*</span>
+              3. Lot / Batch <span class="text-rose-400">*</span>
             </label>
             <select
               v-model="issueForm.lot_id"
               required
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-amber-500"
             >
               <option value="" disabled>-- Select Lot --</option>
               <option v-for="lot in partLots" :key="lot._id" :value="lot._id">
                 Lot: {{ lot.lot_batch_no }} (Received: {{ lot.received_date || 'N/A' }})
               </option>
             </select>
-          </div>
-
-          <!-- Source NFC Location -->
-          <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              3. Source Location (NFC Tag) <span class="text-rose-400">*</span>
-            </label>
-            <div class="flex gap-2">
-              <input
-                v-model="issueForm.location_code"
-                type="text"
-                required
-                placeholder="e.g. E11-1A"
-                class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono font-bold"
-              />
-              <button
-                type="button"
-                @click="openNfcScanner('issue_src')"
-                class="px-3.5 py-2 bg-amber-950 hover:bg-amber-900 border border-amber-700 text-amber-300 text-xs font-bold rounded-xl flex items-center gap-1.5"
-              >
-                <Radio class="w-4 h-4 animate-pulse text-amber-400" />
-                <span>Scan NFC</span>
-              </button>
-            </div>
           </div>
 
           <!-- Work Order / Reference -->
@@ -323,33 +507,58 @@
               type="text"
               required
               placeholder="e.g. WO-2026-BATTPACK-01"
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-amber-500"
             />
           </div>
 
-          <!-- Quantity -->
-          <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              5. Quantity to Issue <span class="text-rose-400">*</span>
-            </label>
-            <input
-              v-model.number="issueForm.quantity"
-              type="number"
-              min="1"
-              required
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono font-bold"
-            />
+          <!-- Quantity to Issue -->
+          <div class="md:col-span-2">
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                5. Quantity to Issue <span class="text-rose-400">*</span>
+              </label>
+              <span v-if="selectedBinItem" class="text-xs font-mono font-semibold text-emerald-400">
+                Available Stock: <span class="font-bold underline">{{ selectedBinItem.available_quantity?.toLocaleString() }}</span> {{ selectedBinItem.unit_of_measure || 'PCS' }}
+              </span>
+            </div>
+            <div class="flex gap-3">
+              <input
+                ref="quantityInputRef"
+                v-model.number="issueForm.quantity"
+                type="number"
+                min="1"
+                :max="selectedBinItem?.available_quantity || undefined"
+                required
+                placeholder="Enter quantity..."
+                class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-base text-white font-mono font-bold focus:outline-none focus:border-amber-500"
+              />
+              <button
+                v-if="selectedBinItem"
+                type="button"
+                @click="issueForm.quantity = selectedBinItem.available_quantity"
+                class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 rounded-xl border border-slate-700 transition"
+                title="Fill Maximum Available"
+              >
+                Max ({{ selectedBinItem.available_quantity }})
+              </button>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-1">
+              Press <kbd class="px-1.5 py-0.5 text-[10px] bg-slate-800 text-amber-400 rounded border border-slate-700 font-mono">Enter ↵</kbd> to issue immediately.
+            </p>
           </div>
         </div>
 
-        <div class="pt-4 border-t border-slate-800 flex justify-end">
+        <div class="pt-4 border-t border-slate-800 flex items-center justify-between">
+          <span class="text-xs text-slate-400 hidden sm:inline">
+            Atomic deduction with negative-stock prevention.
+          </span>
           <button
             type="submit"
-            :disabled="submitting"
-            class="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm rounded-xl shadow-lg shadow-amber-950 flex items-center gap-2 transition"
+            :disabled="submitting || !issueForm.part_id || !issueForm.lot_id || !issueForm.location_code || !issueForm.quantity"
+            class="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm rounded-xl shadow-lg shadow-amber-950 flex items-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <CheckCircle2 class="w-5 h-5" />
-            <span>Confirm & Issue Stock</span>
+            <span>{{ submitting ? 'Processing Issue...' : 'Confirm & Issue Stock' }}</span>
           </button>
         </div>
       </form>
@@ -694,10 +903,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import partsApi from '@/api/parts'
 import lotsApi from '@/api/lots'
 import inventoryApi from '@/api/inventory'
+import locationsApi from '@/api/locations'
 import stockApi from '@/api/stock'
 import cellsApi from '@/api/cells'
 import { useToastStore } from '@/stores/toast'
@@ -708,6 +919,7 @@ import {
   QrCode, CheckCircle2, BatteryCharging
 } from 'lucide-vue-next'
 
+const route = useRoute()
 const toast = useToastStore()
 const activeTab = ref('receive')
 const submitting = ref(false)
@@ -726,6 +938,17 @@ const inventoryList = ref([])
 const cellMode = ref('range')
 const transferMode = ref('quantity')
 const csvSerialInput = ref('')
+
+// Location Inventory & Fast Picker state
+const receiveQtyInputRef = ref(null)
+const quantityInputRef = ref(null)
+const binInventoryList = ref([])
+const selectedBinItem = ref(null)
+const loadingLocationStock = ref(false)
+
+const receiveBinInventoryList = ref([])
+const selectedReceiveBinItem = ref(null)
+const loadingReceiveStock = ref(false)
 
 // Forms
 const receiveForm = ref({
@@ -775,6 +998,7 @@ const releaseForm = ref({
 const showNfcModal = ref(false)
 const showBarcodeModal = ref(false)
 const nfcTargetField = ref(null)
+const barcodeTargetField = ref(null)
 const resolvedDestLocation = ref(null)
 
 const selectedPart = computed(() => {
@@ -845,16 +1069,176 @@ const openNfcScanner = (target) => {
   showNfcModal.value = true
 }
 
-const openBarcodeScanner = () => {
+const openBarcodeScanner = (target = null) => {
+  barcodeTargetField.value = target
   showBarcodeModal.value = true
 }
 
-const handleLocationResolved = (loc) => {
+// Automatically resolve and load all parts stored in the given bin location for Issue
+const loadLocationInventory = async (locationCode) => {
+  if (!locationCode || !locationCode.trim()) {
+    binInventoryList.value = []
+    selectedBinItem.value = null
+    return
+  }
+
+  const cleanCode = locationCode.replace('inventory://location/', '').trim()
+  loadingLocationStock.value = true
+
+  try {
+    const locRes = await locationsApi.getByCode(cleanCode)
+    const loc = locRes.data || locRes
+
+    if (loc && loc._id) {
+      // Get enriched inventory items for this location
+      let items = []
+      if (loc.inventory && loc.inventory.length > 0) {
+        items = loc.inventory
+      } else {
+        const invRes = await inventoryApi.getByLocation(loc._id)
+        items = invRes.data || []
+      }
+
+      // Filter to items with positive available stock
+      const availableItems = items.filter(i => (i.available_quantity || i.quantity || 0) > 0)
+      binInventoryList.value = availableItems
+
+      if (availableItems.length > 0) {
+        // Pre-select the first part in this bin
+        await selectBinItem(availableItems[0])
+      } else {
+        selectedBinItem.value = null
+      }
+    } else {
+      binInventoryList.value = []
+      selectedBinItem.value = null
+    }
+  } catch (err) {
+    binInventoryList.value = []
+    selectedBinItem.value = null
+  } finally {
+    loadingLocationStock.value = false
+  }
+}
+
+// Automatically pre-fill Receive form when a destination location is scanned
+const handleReceiveLocationAutoFill = async (locCode) => {
+  if (!locCode || !locCode.trim()) {
+    receiveBinInventoryList.value = []
+    selectedReceiveBinItem.value = null
+    return
+  }
+  const cleanCode = locCode.replace('inventory://location/', '').trim()
+  receiveForm.value.location_code = cleanCode
+  loadingReceiveStock.value = true
+
+  try {
+    const locRes = await locationsApi.getByCode(cleanCode)
+    const loc = locRes.data || locRes
+
+    if (loc && loc._id) {
+      resolvedDestLocation.value = loc
+
+      let items = []
+      if (loc.inventory && loc.inventory.length > 0) {
+        items = loc.inventory
+      } else {
+        const invRes = await inventoryApi.getByLocation(loc._id)
+        items = invRes.data || []
+      }
+
+      const validItems = items.filter(i => (i.quantity || 0) > 0 || (i.available_quantity || 0) > 0)
+      receiveBinInventoryList.value = validItems
+
+      // If this bin already stores inventory items, pre-select that part
+      if (validItems.length > 0) {
+        selectReceiveBinItem(validItems[0])
+      } else {
+        selectedReceiveBinItem.value = null
+        if (!receiveForm.value.part_id && partsList.value.length > 0) {
+          receiveForm.value.part_id = partsList.value[0]._id
+        }
+        autoGenerateLot()
+
+        if (!receiveForm.value.reference_id) {
+          const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+          receiveForm.value.reference_id = `PO-${todayStr}-01`
+        }
+
+        nextTick(() => {
+          if (receiveQtyInputRef.value) {
+            receiveQtyInputRef.value.focus()
+            receiveQtyInputRef.value.select()
+          }
+        })
+      }
+    } else {
+      receiveBinInventoryList.value = []
+      selectedReceiveBinItem.value = null
+    }
+  } catch (e) {
+    receiveBinInventoryList.value = []
+    selectedReceiveBinItem.value = null
+  } finally {
+    loadingReceiveStock.value = false
+  }
+}
+
+// 1-Click select a part stored in this bin to restock
+const selectReceiveBinItem = (item) => {
+  if (!item) return
+  selectedReceiveBinItem.value = item
+  receiveForm.value.part_id = item.part_id
+  autoGenerateLot()
+
+  if (!receiveForm.value.reference_id) {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    receiveForm.value.reference_id = `PO-${todayStr}-01`
+  }
+
+  nextTick(() => {
+    if (receiveQtyInputRef.value) {
+      receiveQtyInputRef.value.focus()
+      receiveQtyInputRef.value.select()
+    }
+  })
+}
+
+// 1-Click select a part/lot stored in this bin
+const selectBinItem = async (item) => {
+  if (!item) return
+  selectedBinItem.value = item
+  issueForm.value.part_id = item.part_id
+  await loadLotsForIssue()
+  issueForm.value.lot_id = item.lot_id
+
+  if (!issueForm.value.reference_id) {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    issueForm.value.reference_id = `WO-ISSUE-${todayStr}`
+  }
+
+  // Pre-fill quantity if not already set
+  if (!issueForm.value.quantity || issueForm.value.quantity <= 0) {
+    issueForm.value.quantity = Math.min(100, item.available_quantity || 1)
+  }
+
+  // Focus the quantity input for immediate typing and Enter key submission
+  nextTick(() => {
+    if (quantityInputRef.value) {
+      quantityInputRef.value.focus()
+      quantityInputRef.value.select()
+    }
+  })
+}
+
+const handleLocationResolved = async (loc) => {
   if (nfcTargetField.value === 'receive_dest') {
     receiveForm.value.location_code = loc.location_code
     resolvedDestLocation.value = loc
+    await handleReceiveLocationAutoFill(loc.location_code)
   } else if (nfcTargetField.value === 'issue_src') {
     issueForm.value.location_code = loc.location_code
+    await loadLocationInventory(loc.location_code)
   } else if (nfcTargetField.value === 'trans_src') {
     transferForm.value.from_location_code = loc.location_code
   } else if (nfcTargetField.value === 'trans_dest') {
@@ -862,12 +1246,60 @@ const handleLocationResolved = (loc) => {
   } else if (nfcTargetField.value === 'cell_trans_dest') {
     cellTransferForm.value.to_location_code = loc.location_code
   } else {
-    toast.success(`Scanned: ${loc.location_code}`)
+    // General quick resolver from top button
+    if (activeTab.value === 'receive') {
+      receiveForm.value.location_code = loc.location_code
+      await handleReceiveLocationAutoFill(loc.location_code)
+    } else {
+      issueForm.value.location_code = loc.location_code
+      activeTab.value = 'issue'
+      await loadLocationInventory(loc.location_code)
+    }
   }
 }
 
-const handleBarcodeScanned = (code) => {
-  cellTransferForm.value.cell_serial_no = code
+const handleBarcodeScanned = async (code) => {
+  const cleanCode = (code || '').trim()
+  if (!cleanCode) return
+
+  if (barcodeTargetField.value === 'receive_dest') {
+    const locCode = cleanCode.replace('inventory://location/', '').trim()
+    receiveForm.value.location_code = locCode
+    await handleReceiveLocationAutoFill(locCode)
+    return
+  }
+
+  if (barcodeTargetField.value === 'issue_src') {
+    const locCode = cleanCode.replace('inventory://location/', '').trim()
+    issueForm.value.location_code = locCode
+    await loadLocationInventory(locCode)
+    return
+  }
+
+  if (cleanCode.startsWith('CELL-')) {
+    cellTransferForm.value.cell_serial_no = cleanCode
+    return
+  }
+
+  // Fallback: check if it's a location code
+  try {
+    const locTag = cleanCode.replace('inventory://location/', '').trim()
+    const locRes = await locationsApi.getByCode(locTag)
+    if (locRes && (locRes.data || locRes._id)) {
+      const loc = locRes.data || locRes
+      if (activeTab.value === 'receive') {
+        receiveForm.value.location_code = loc.location_code
+        await handleReceiveLocationAutoFill(loc.location_code)
+      } else {
+        issueForm.value.location_code = loc.location_code
+        activeTab.value = 'issue'
+        await loadLocationInventory(loc.location_code)
+      }
+      return
+    }
+  } catch (e) {}
+
+  toast.info(`Scanned Code: ${cleanCode}`)
 }
 
 // Submissions
@@ -896,8 +1328,11 @@ const submitReceive = async () => {
     }
 
     const res = await stockApi.receive(payload)
-    toast.success(res.message || 'Receive successful')
+    toast.success(res.message || 'Material received successfully')
     await loadData()
+    if (receiveForm.value.location_code) {
+      await handleReceiveLocationAutoFill(receiveForm.value.location_code)
+    }
   } finally {
     submitting.value = false
   }
@@ -907,8 +1342,11 @@ const submitIssue = async () => {
   submitting.value = true
   try {
     const res = await stockApi.issue(issueForm.value)
-    toast.success(res.message || 'Issue successful')
+    toast.success(res.message || 'Material issued successfully')
     await loadData()
+    if (issueForm.value.location_code) {
+      await loadLocationInventory(issueForm.value.location_code)
+    }
   } finally {
     submitting.value = false
   }
@@ -958,6 +1396,29 @@ const submitRelease = async () => {
     submitting.value = false
   }
 }
+
+// Sync route parameters (e.g. /stock-operations?tab=receive&location=E11-1A or tab=issue)
+const syncFromRoute = async () => {
+  if (route.query.tab) {
+    activeTab.value = route.query.tab
+  }
+  if (route.query.location) {
+    const loc = route.query.location
+    if (partsList.value.length === 0) {
+      await loadData()
+    }
+    if (activeTab.value === 'receive') {
+      await handleReceiveLocationAutoFill(loc)
+    } else {
+      issueForm.value.location_code = loc
+      await loadLocationInventory(loc)
+    }
+  }
+}
+
+watch(() => route.query, () => {
+  syncFromRoute()
+}, { immediate: true })
 
 onMounted(() => {
   loadData()

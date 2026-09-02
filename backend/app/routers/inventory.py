@@ -37,8 +37,8 @@ def get_inventory_by_part(part_id):
 @jwt_required(optional=True)
 def get_inventory_by_location(location_id):
     try:
-        items = inv_service.inv_repo.find_by_location(location_id)
-        return success_response(items)
+        res = inv_service.get_all_inventory(location_id=location_id, limit=200)
+        return success_response(res.get("items", []))
     except Exception as e:
         return error_response("FETCH_ERROR", str(e), 500)
 

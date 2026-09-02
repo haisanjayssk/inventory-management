@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from app.repositories.location_repository import LocationRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.cell_repository import CellInventoryRepository
+from app.repositories.part_repository import PartRepository, LotRepository
 from app.models.counter import SequenceCounter
 
 class LocationService:
@@ -9,6 +10,23 @@ class LocationService:
         self.location_repo = LocationRepository()
         self.inventory_repo = InventoryRepository()
         self.cell_inventory_repo = CellInventoryRepository()
+        self.part_repo = PartRepository()
+        self.lot_repo = LotRepository()
+
+    def _enrich_inventory(self, loc_id: str):
+        items = self.inventory_repo.find_by_location(loc_id)
+        enriched = []
+        for inv in items:
+            part = self.part_repo.find_by_id(inv.get("part_id"))
+            lot = self.lot_repo.find_by_id(inv.get("lot_id"))
+            enriched.append({
+                **inv,
+                "part_code": part.get("part_code") if part else None,
+                "part_name": part.get("part_name") if part else None,
+                "unit_of_measure": part.get("unit_of_measure", "PCS") if part else "PCS",
+                "lot_batch_no": lot.get("lot_batch_no") if lot else None
+            })
+        return enriched
 
     def generate_warehouse_code(self, warehouse_name: str) -> str:
         """Derives a unique warehouse code prefix, e.g. EMS -> E, MES -> ME."""
@@ -51,7 +69,7 @@ class LocationService:
         if not loc:
             raise ValueError(f"Location {location_id} not found")
         loc_id = loc["_id"]
-        loc["inventory"] = self.inventory_repo.find_by_location(loc_id)
+        loc["inventory"] = self._enrich_inventory(loc_id)
         loc["cells"] = self.cell_inventory_repo.find_by_location_id(loc_id)
         return loc
 
@@ -60,7 +78,7 @@ class LocationService:
         if not loc:
             raise ValueError(f"Location with code '{location_code}' not found")
         loc_id = loc["_id"]
-        loc["inventory"] = self.inventory_repo.find_by_location(loc_id)
+        loc["inventory"] = self._enrich_inventory(loc_id)
         loc["cells"] = self.cell_inventory_repo.find_by_location_id(loc_id)
         return loc
 
@@ -70,7 +88,7 @@ class LocationService:
         if not loc:
             raise ValueError(f"No location registered with NFC UID: '{nfc_tag_uid}'")
         loc_id = loc["_id"]
-        loc["inventory"] = self.inventory_repo.find_by_location(loc_id)
+        loc["inventory"] = self._enrich_inventory(loc_id)
         loc["cells"] = self.cell_inventory_repo.find_by_location_id(loc_id)
         return loc
 

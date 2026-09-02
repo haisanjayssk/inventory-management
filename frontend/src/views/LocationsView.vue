@@ -199,8 +199,8 @@
             No bulk inventory at this location.
           </div>
           <div v-for="inv in selectedLoc.inventory" :key="inv._id" class="p-2 rounded-lg bg-slate-950 border border-slate-800 text-xs flex justify-between">
-            <span class="font-mono text-white">{{ inv.part_id }} (Lot: {{ inv.lot_id }})</span>
-            <span class="font-mono font-bold text-emerald-400">{{ inv.quantity }} PCS</span>
+            <span class="font-mono text-white">{{ inv.part_code || inv.part_id }} (Lot: {{ inv.lot_batch_no || inv.lot_id }})</span>
+            <span class="font-mono font-bold text-emerald-400">{{ inv.quantity || inv.available_quantity }} {{ inv.unit_of_measure || 'PCS' }}</span>
           </div>
         </div>
 
@@ -220,6 +220,18 @@
           </div>
         </div>
       </div>
+
+      <template #footer>
+        <button type="button" @click="showDetailModal = false" class="px-4 py-2 bg-slate-800 text-xs font-bold text-slate-300 rounded-xl">Close</button>
+        <router-link
+          v-if="selectedLoc"
+          :to="`/stock-operations?tab=issue&location=${selectedLoc.location_code}`"
+          class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold rounded-xl shadow-lg shadow-amber-950 flex items-center gap-1.5"
+        >
+          <span>Issue From Bin</span>
+          <ArrowRight class="w-3.5 h-3.5" />
+        </router-link>
+      </template>
     </Modal>
 
     <!-- NFC Tester Modal -->
@@ -233,7 +245,7 @@ import locationsApi from '@/api/locations'
 import Modal from '@/components/Modal.vue'
 import NfcReaderModal from '@/components/NfcReaderModal.vue'
 import { useToastStore } from '@/stores/toast'
-import { Wand2, Radio } from 'lucide-vue-next'
+import { Wand2, Radio, ArrowRight } from 'lucide-vue-next'
 
 const locations = ref([])
 const filterWarehouse = ref('')
