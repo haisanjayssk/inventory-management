@@ -125,12 +125,23 @@ class LocationService:
     def bulk_generate_locations(self, data: dict):
         wh_name = data["warehouse_name"].strip()
         wh_code = (data.get("warehouse_code") or self.generate_warehouse_code(wh_name)).upper()
-        bays = data["bays"] # list of bay identifiers e.g. ["1", "2"]
-        rows_count = int(data["rows_count"])
         racks_count = int(data["racks_count"])
         sections = data["sections"] # e.g. ["A", "B", "C"]
 
-        total_to_generate = len(bays) * rows_count * racks_count * len(sections)
+        # Support both custom bay configs and uniform bays
+        bay_configs = data.get("bay_configs")
+        if not bay_configs:
+            bays = data.get("bays") or []
+            rows_count = int(data.get("rows_count") or 1)
+            bay_configs = [{"bay": str(b).strip(), "rows_count": rows_count} for b in bays if str(b).strip()]
+
+        if not bay_configs:
+            raise ValueError("At least one bay configuration must be provided")
+
+        total_to_generate = sum(
+            int(cfg["rows_count"]) * racks_count * len(sections)
+            for cfg in bay_configs
+        )
         if total_to_generate > 2000:
             raise ValueError(f"Bulk generation exceeds limit of 2,000 locations per batch (attempted {total_to_generate})")
 
@@ -140,11 +151,13 @@ class LocationService:
         created_docs = []
         now = datetime.now(timezone.utc).isoformat()
 
-        for bay in bays:
-            for row in range(1, rows_count + 1):
+        for cfg in bay_configs:
+            bay = str(cfg["bay"]).strip()
+            rows_for_bay = int(cfg["rows_count"])
+            for row in range(1, rows_for_bay + 1):
                 for rack in range(1, racks_count + 1):
                     for section in sections:
-                        loc_code = self.build_location_code(wh_code, str(bay), row, rack, str(section).upper())
+                        loc_code = self.build_location_code(wh_code, bay, row, rack, str(section).upper())
                         
                         # Skip if already exists
                         if self.location_repo.find_by_code(loc_code):
@@ -155,7 +168,7 @@ class LocationService:
                             "location_code": loc_code,
                             "warehouse_name": wh_name,
                             "warehouse_code": wh_code,
-                            "bay_number": str(bay),
+                            "bay_number": bay,
                             "row_number": row,
                             "rack_number": rack,
                             "section_code": str(section).upper(),

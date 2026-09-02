@@ -75,13 +75,18 @@ class LocationSchema(Schema):
     nfc_tag_uid = fields.String(allow_none=True, load_default=None)
     status = fields.String(validate=validate.OneOf(["ACTIVE", "INACTIVE", "MAINTENANCE"]), load_default="ACTIVE")
 
+class BayConfigSchema(Schema):
+    bay = fields.String(required=True)
+    rows_count = fields.Integer(required=True, validate=validate.Range(min=1, max=20))
+
 class BulkLocationGenerateSchema(Schema):
     warehouse_name = fields.String(required=True, validate=validate.Length(min=2, max=50))
     warehouse_code = fields.String(allow_none=True, load_default=None)
-    bays = fields.List(fields.String(), required=True) # e.g. ["1", "2", "3"]
-    rows_count = fields.Integer(required=True, validate=validate.Range(min=1, max=10))
-    racks_count = fields.Integer(required=True, validate=validate.Range(min=1, max=10))
+    bays = fields.List(fields.String(), allow_none=True, load_default=None) # e.g. ["1", "2", "3"]
+    rows_count = fields.Integer(allow_none=True, load_default=None, validate=validate.Range(min=1, max=20))
+    racks_count = fields.Integer(required=True, validate=validate.Range(min=1, max=20))
     sections = fields.List(fields.String(), required=True) # e.g. ["A", "B", "C"]
+    bay_configs = fields.List(fields.Nested(BayConfigSchema), allow_none=True, load_default=None)
 
 class StockReceiveSchema(Schema):
     part_id = fields.String(required=True)

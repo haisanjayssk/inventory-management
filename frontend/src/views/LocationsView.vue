@@ -93,15 +93,35 @@
     </div>
 
     <!-- Bulk Generator Wizard Modal -->
-    <Modal v-model="showBulkModal" title="Warehouse Location Generator Wizard" maxWidth="max-w-xl">
+    <Modal v-model="showBulkModal" title="Warehouse Location Generator Wizard" maxWidth="max-w-2xl">
       <template #icon>
-        <Wand2 class="w-5 h-5" />
+        <Wand2 class="w-5 h-5 text-emerald-400" />
       </template>
 
       <form @submit.prevent="generateBulkLocations" class="space-y-4">
         <p class="text-xs text-slate-400">
           Automatically generate structured location codes (e.g. <span class="font-mono text-emerald-400">E11-1A</span>) and pre-map default NFC tags (<span class="font-mono text-emerald-400">inventory://location/E11-1A</span>).
         </p>
+
+        <!-- Mode Selector: Uniform vs Custom per Bay -->
+        <div class="flex items-center gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+          <button
+            type="button"
+            @click="generatorMode = 'custom'"
+            class="flex-1 py-2 text-xs font-bold rounded-lg transition"
+            :class="generatorMode === 'custom' ? 'bg-emerald-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'"
+          >
+            Custom Rows Per Bay (Flexible)
+          </button>
+          <button
+            type="button"
+            @click="generatorMode = 'uniform'"
+            class="flex-1 py-2 text-xs font-bold rounded-lg transition"
+            :class="generatorMode === 'uniform' ? 'bg-emerald-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'"
+          >
+            Uniform Layout (Equal Rows)
+          </button>
+        </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -126,17 +146,6 @@
           </div>
 
           <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Bays (Comma Separated)</label>
-            <input
-              v-model="bulkForm.baysInput"
-              type="text"
-              required
-              placeholder="1, 2, 3"
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
-            />
-          </div>
-
-          <div>
             <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Sections per Rack</label>
             <input
               v-model="bulkForm.sectionsInput"
@@ -148,33 +157,119 @@
           </div>
 
           <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Rows per Bay (1-10)</label>
-            <input
-              v-model.number="bulkForm.rows_count"
-              type="number"
-              min="1"
-              max="10"
-              required
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
-            />
-          </div>
-
-          <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Racks per Row (1-10)</label>
+            <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Racks per Row (1-20)</label>
             <input
               v-model.number="bulkForm.racks_count"
               type="number"
               min="1"
-              max="10"
+              max="20"
               required
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
             />
           </div>
         </div>
 
-        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-xs text-slate-400">
-          Total Locations to Create:
-          <span class="text-emerald-400 font-mono font-bold">{{ estimatedBulkCount }} Bins</span>
+        <!-- MODE 1: UNIFORM ROWS -->
+        <div v-if="generatorMode === 'uniform'" class="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3 bg-slate-950/60 rounded-xl border border-slate-800">
+          <div>
+            <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Bays (Comma Separated)</label>
+            <input
+              v-model="bulkForm.baysInput"
+              type="text"
+              required
+              placeholder="1, 2, 3"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Rows per Bay (1-20)</label>
+            <input
+              v-model.number="bulkForm.rows_count"
+              type="number"
+              min="1"
+              max="20"
+              required
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
+            />
+          </div>
+        </div>
+
+        <!-- MODE 2: CUSTOM ROWS PER BAY -->
+        <div v-else class="space-y-3 p-4 bg-slate-950/70 rounded-2xl border border-emerald-500/30">
+          <div class="flex items-center justify-between">
+            <div>
+              <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                <Layers class="w-4 h-4" />
+                Individual Bay & Row Configuration
+              </h4>
+              <p class="text-[11px] text-slate-400">Specify the exact number of rows for each physical bay</p>
+            </div>
+
+            <button
+              type="button"
+              @click="addBayConfig"
+              class="px-2.5 py-1 bg-emerald-950 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 text-xs font-bold rounded-lg flex items-center gap-1 transition"
+            >
+              <Plus class="w-3.5 h-3.5" />
+              <span>Add Bay</span>
+            </button>
+          </div>
+
+          <div class="space-y-2 max-h-52 overflow-y-auto pr-1">
+            <div
+              v-for="(cfg, idx) in customBayConfigs"
+              :key="idx"
+              class="flex items-center gap-3 p-2.5 bg-slate-900 rounded-xl border border-slate-800 hover:border-slate-700 transition"
+            >
+              <div class="w-24">
+                <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">Bay #</label>
+                <input
+                  v-model="cfg.bay"
+                  type="text"
+                  required
+                  placeholder="e.g. 1"
+                  class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold"
+                />
+              </div>
+
+              <div class="flex-1">
+                <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">Rows in this Bay</label>
+                <input
+                  v-model.number="cfg.rows_count"
+                  type="number"
+                  min="1"
+                  max="20"
+                  required
+                  placeholder="e.g. 3"
+                  class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold"
+                />
+              </div>
+
+              <div class="w-36 text-right pt-3">
+                <span class="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-2 py-1 rounded block">
+                  {{ (cfg.rows_count || 0) * (bulkForm.racks_count || 0) * parsedSections.length }} Bins (E{{ cfg.bay }}1..E{{ cfg.bay }}{{ cfg.rows_count }})
+                </span>
+              </div>
+
+              <div class="pt-3">
+                <button
+                  type="button"
+                  @click="removeBayConfig(idx)"
+                  :disabled="customBayConfigs.length <= 1"
+                  class="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition disabled:opacity-20"
+                  title="Remove Bay"
+                >
+                  <Trash2 class="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+          <span>Total Locations to Create:</span>
+          <span class="text-emerald-400 font-mono font-bold text-sm">{{ estimatedBulkCount }} Bins</span>
         </div>
 
         <div class="pt-4 border-t border-slate-800 flex justify-end gap-2">
@@ -245,7 +340,7 @@ import locationsApi from '@/api/locations'
 import Modal from '@/components/Modal.vue'
 import NfcReaderModal from '@/components/NfcReaderModal.vue'
 import { useToastStore } from '@/stores/toast'
-import { Wand2, Radio, ArrowRight } from 'lucide-vue-next'
+import { Wand2, Radio, ArrowRight, Layers, Plus, Trash2 } from 'lucide-vue-next'
 
 const locations = ref([])
 const filterWarehouse = ref('')
@@ -256,23 +351,59 @@ const showNfcModal = ref(false)
 const selectedLoc = ref(null)
 const toast = useToastStore()
 
+const generatorMode = ref('custom')
+
 const bulkForm = ref({
   warehouse_name: 'EMS Warehouse',
   warehouse_code: 'E',
-  baysInput: '1, 2',
-  sectionsInput: 'A, B, C',
+  baysInput: '1, 2, 3',
+  sectionsInput: 'A, B',
   rows_count: 2,
   racks_count: 2
 })
+
+const customBayConfigs = ref([
+  { bay: '1', rows_count: 3 },
+  { bay: '2', rows_count: 5 },
+  { bay: '3', rows_count: 2 }
+])
+
+const addBayConfig = () => {
+  const nextNum = customBayConfigs.value.length + 1
+  customBayConfigs.value.push({ bay: String(nextNum), rows_count: 2 })
+}
+
+const removeBayConfig = (index) => {
+  if (customBayConfigs.value.length > 1) {
+    customBayConfigs.value.splice(index, 1)
+  }
+}
 
 const occupiedCount = computed(() => {
   return locations.value.filter(l => l.is_occupied).length
 })
 
+const parsedSections = computed(() => {
+  return (bulkForm.value.sectionsInput || '')
+    .split(',')
+    .map(s => s.trim().toUpperCase())
+    .filter(Boolean)
+})
+
 const estimatedBulkCount = computed(() => {
-  const bays = bulkForm.value.baysInput.split(',').map(s => s.trim()).filter(Boolean)
-  const sections = bulkForm.value.sectionsInput.split(',').map(s => s.trim()).filter(Boolean)
-  return bays.length * (bulkForm.value.rows_count || 0) * (bulkForm.value.racks_count || 0) * sections.length
+  const racks = bulkForm.value.racks_count || 0
+  const secCount = parsedSections.value.length
+
+  if (generatorMode.value === 'custom') {
+    return customBayConfigs.value.reduce((acc, cfg) => {
+      const rows = Number(cfg.rows_count) || 0
+      return acc + (rows * racks * secCount)
+    }, 0)
+  } else {
+    const bays = (bulkForm.value.baysInput || '').split(',').map(s => s.trim()).filter(Boolean)
+    const rows = bulkForm.value.rows_count || 0
+    return bays.length * rows * racks * secCount
+  }
 })
 
 const loadLocations = async () => {
@@ -286,16 +417,24 @@ const loadLocations = async () => {
 
 const generateBulkLocations = async () => {
   try {
-    const bays = bulkForm.value.baysInput.split(',').map(s => s.trim()).filter(Boolean)
-    const sections = bulkForm.value.sectionsInput.split(',').map(s => s.trim()).filter(Boolean)
+    const sections = parsedSections.value
     const payload = {
       warehouse_name: bulkForm.value.warehouse_name,
       warehouse_code: bulkForm.value.warehouse_code,
-      bays,
       sections,
-      rows_count: bulkForm.value.rows_count,
       racks_count: bulkForm.value.racks_count
     }
+
+    if (generatorMode.value === 'custom') {
+      payload.bay_configs = customBayConfigs.value.map(c => ({
+        bay: String(c.bay).trim(),
+        rows_count: Number(c.rows_count)
+      }))
+    } else {
+      payload.bays = (bulkForm.value.baysInput || '').split(',').map(s => s.trim()).filter(Boolean)
+      payload.rows_count = bulkForm.value.rows_count
+    }
+
     const res = await locationsApi.bulkGenerate(payload)
     toast.success(res.message || 'Locations generated successfully')
     showBulkModal.value = false
