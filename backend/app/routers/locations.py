@@ -8,6 +8,15 @@ from app.utils.responses import success_response, error_response
 locations_bp = Blueprint("locations", __name__, url_prefix="/api/v1/locations")
 location_service = LocationService()
 
+@locations_bp.route("/warehouses", methods=["GET"])
+@jwt_required(optional=True)
+def get_warehouses():
+    try:
+        warehouses = location_service.get_warehouses()
+        return success_response(warehouses)
+    except Exception as e:
+        return error_response("FETCH_ERROR", str(e), 500)
+
 @locations_bp.route("", methods=["GET"])
 @jwt_required(optional=True)
 def get_locations():

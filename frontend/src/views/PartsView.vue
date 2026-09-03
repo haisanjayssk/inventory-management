@@ -8,6 +8,14 @@
 
       <div class="flex items-center gap-2">
         <button
+          @click="openBulkModal"
+          class="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold rounded-lg shadow transition"
+        >
+          <UploadCloud class="w-3.5 h-3.5 text-cyan-400" />
+          <span>Bulk Import</span>
+        </button>
+
+        <button
           @click="openNewPartModal"
           class="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-lg shadow transition"
         >
@@ -16,6 +24,7 @@
         </button>
       </div>
     </div>
+
 
     <!-- Parts Table -->
     <div class="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
@@ -243,6 +252,204 @@
         </div>
       </form>
     </Modal>
+
+    <!-- Bulk Import Modal -->
+    <Modal v-model="showBulkModal" title="Bulk Import Parts Catalog" maxWidth="max-w-3xl">
+
+      <template #icon>
+        <UploadCloud class="w-5 h-5 text-cyan-400" />
+      </template>
+
+      <div class="space-y-5">
+        <!-- 1. Download Templates Section -->
+        <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <div>
+              <h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <FileSpreadsheet class="w-4 h-4 text-emerald-400" />
+                <span>1. Download Pre-configured Template</span>
+              </h4>
+              <p class="text-[11px] text-slate-400 mt-0.5">
+                Includes all active part types, standard fields, and dynamic electrical/mechanical attributes.
+              </p>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap gap-2 pt-1">
+            <button
+              type="button"
+              @click="downloadTemplate('csv')"
+              :disabled="downloadingTemplate"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 text-xs font-semibold rounded-lg transition"
+            >
+              <FileText class="w-3.5 h-3.5 text-blue-400" />
+              <span>Download CSV Template</span>
+            </button>
+            <button
+              type="button"
+              @click="downloadTemplate('xlsx')"
+              :disabled="downloadingTemplate"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 text-xs font-semibold rounded-lg transition"
+            >
+              <FileSpreadsheet class="w-3.5 h-3.5 text-emerald-400" />
+              <span>Download Excel Template (.xlsx)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 2. File Upload Dropzone -->
+        <div class="space-y-2">
+          <h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+            <Upload class="w-4 h-4 text-cyan-400" />
+            <span>2. Select File to Import</span>
+          </h4>
+
+          <div
+            @dragover.prevent="isDragging = true"
+            @dragleave.prevent="isDragging = false"
+            @drop.prevent="handleFileDrop"
+            @click="$refs.fileInput.click()"
+            class="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors"
+            :class="isDragging ? 'border-cyan-400 bg-cyan-950/20' : selectedFile ? 'border-emerald-500/60 bg-emerald-950/10' : 'border-slate-800 bg-slate-950/60 hover:border-slate-700'"
+          >
+            <input
+              ref="fileInput"
+              type="file"
+              accept=".csv,.xlsx,.xls,.json"
+              class="hidden"
+              @change="handleFileSelect"
+            />
+
+            <div v-if="!selectedFile" class="space-y-1.5">
+              <UploadCloud class="w-8 h-8 text-slate-500 mx-auto" />
+              <p class="text-xs text-slate-300 font-medium">Click to browse or drag & drop your parts file</p>
+              <p class="text-[10px] text-slate-500 font-mono">Supported formats: .CSV, .XLSX, .XLS, .JSON</p>
+            </div>
+
+            <div v-else class="flex items-center justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-left">
+              <div class="flex items-center gap-2.5">
+                <FileSpreadsheet v-if="selectedFile.name.endsWith('.xlsx') || selectedFile.name.endsWith('.xls')" class="w-6 h-6 text-emerald-400" />
+                <FileText v-else class="w-6 h-6 text-blue-400" />
+                <div>
+                  <p class="text-xs font-bold text-white font-mono">{{ selectedFile.name }}</p>
+                  <p class="text-[10px] text-slate-400">{{ formatFileSize(selectedFile.size) }}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                @click.stop="removeFile"
+                class="p-1 rounded-md text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition"
+              >
+                <X class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Import Options & Auto Vendor Notice -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <label class="block text-xs font-bold text-white uppercase tracking-wider">Duplicate Part Code Policy</label>
+            <div class="space-y-1.5">
+              <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input type="radio" v-model="duplicateStrategy" value="skip" class="text-cyan-500 focus:ring-0 bg-slate-900" />
+                <span><strong>Skip</strong> existing parts (preserve current)</span>
+              </label>
+              <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input type="radio" v-model="duplicateStrategy" value="update" class="text-cyan-500 focus:ring-0 bg-slate-900" />
+                <span><strong>Update</strong> existing parts (overwrite data)</span>
+              </label>
+              <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input type="radio" v-model="duplicateStrategy" value="error" class="text-cyan-500 focus:ring-0 bg-slate-900" />
+                <span><strong>Error</strong> (flag duplicate as error)</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="p-3.5 rounded-xl bg-purple-950/20 border border-purple-900/40 flex items-start gap-2.5">
+            <Sparkles class="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
+            <div class="text-[11px] text-purple-200">
+              <p class="font-bold">Automatic Vendor Provisioning</p>
+              <p class="text-slate-400 mt-1">
+                Any vendor names in the file that are not currently in your database will be automatically created with new vendor IDs.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Import Results Display -->
+        <div v-if="importResult" class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+          <h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+            <CheckCircle2 class="w-4 h-4 text-emerald-400" />
+            <span>Import Execution Summary</span>
+          </h4>
+
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div class="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-center">
+              <p class="text-[10px] text-slate-400 uppercase font-semibold">Total Rows</p>
+              <p class="text-sm font-bold text-white font-mono mt-0.5">{{ importResult.total_rows }}</p>
+            </div>
+            <div class="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-800/50 text-center">
+              <p class="text-[10px] text-emerald-400 uppercase font-semibold">Imported</p>
+              <p class="text-sm font-bold text-emerald-300 font-mono mt-0.5">{{ importResult.imported }}</p>
+            </div>
+            <div class="p-2.5 rounded-lg bg-blue-950/40 border border-blue-800/50 text-center">
+              <p class="text-[10px] text-blue-400 uppercase font-semibold">Updated</p>
+              <p class="text-sm font-bold text-blue-300 font-mono mt-0.5">{{ importResult.updated }}</p>
+            </div>
+            <div class="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-center">
+              <p class="text-[10px] text-slate-400 uppercase font-semibold">Skipped</p>
+              <p class="text-sm font-bold text-slate-300 font-mono mt-0.5">{{ importResult.skipped }}</p>
+            </div>
+          </div>
+
+          <div v-if="importResult.auto_created_vendors && importResult.auto_created_vendors.length > 0" class="p-2.5 rounded-lg bg-purple-950/30 border border-purple-800/40 text-xs">
+            <p class="text-purple-300 font-semibold mb-1">Auto-Created Vendors ({{ importResult.auto_created_vendors.length }}):</p>
+            <div class="flex flex-wrap gap-1">
+              <span v-for="v in importResult.auto_created_vendors" :key="v" class="px-2 py-0.5 rounded bg-purple-900/40 text-purple-200 border border-purple-700/50 text-[10px] font-mono">
+                {{ v }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Error List -->
+          <div v-if="importResult.errors && importResult.errors.length > 0" class="space-y-1.5">
+            <p class="text-xs font-bold text-rose-400 flex items-center gap-1">
+              <AlertTriangle class="w-3.5 h-3.5" />
+              <span>Row Errors ({{ importResult.errors.length }})</span>
+            </p>
+            <div class="max-h-36 overflow-y-auto divide-y divide-rose-950/60 border border-rose-900/40 rounded-lg bg-rose-950/20">
+              <div v-for="(err, idx) in importResult.errors" :key="idx" class="p-2 text-[11px] text-rose-300 flex items-start gap-2">
+                <span class="px-1.5 py-0.2 rounded bg-rose-950 border border-rose-800 font-mono font-bold text-[10px] shrink-0">Row {{ err.row }}</span>
+                <span v-if="err.part_code && err.part_code !== 'N/A'" class="font-mono text-white font-bold shrink-0">{{ err.part_code }}:</span>
+                <span class="text-slate-300">{{ err.error }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="pt-4 border-t border-slate-800 flex justify-end gap-2">
+          <button
+            type="button"
+            @click="showBulkModal = false"
+            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition"
+          >
+            {{ importResult ? 'Done' : 'Cancel' }}
+          </button>
+          <button
+            type="button"
+            @click="submitBulkImport"
+            :disabled="!selectedFile || isImporting"
+            class="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-xs font-extrabold rounded-xl shadow transition"
+          >
+            <RefreshCw v-if="isImporting" class="w-3.5 h-3.5 animate-spin" />
+            <UploadCloud v-else class="w-3.5 h-3.5" />
+            <span>{{ isImporting ? 'Importing...' : 'Start Import' }}</span>
+          </button>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -253,13 +460,35 @@ import partTypesApi from '@/api/partTypes'
 import vendorsApi from '@/api/vendors'
 import Modal from '@/components/Modal.vue'
 import { useToastStore } from '@/stores/toast'
-import { Plus, Layers } from 'lucide-vue-next'
+import {
+  Plus,
+  Layers,
+  UploadCloud,
+  FileSpreadsheet,
+  FileText,
+  Upload,
+  X,
+  Sparkles,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw
+} from 'lucide-vue-next'
 
 const parts = ref([])
 const partTypes = ref([])
 const vendors = ref([])
 const showModal = ref(false)
+const showBulkModal = ref(false)
 const toast = useToastStore()
+
+// Bulk Import State
+const selectedFile = ref(null)
+const isDragging = ref(false)
+const duplicateStrategy = ref('skip')
+const isImporting = ref(false)
+const downloadingTemplate = ref(false)
+const importResult = ref(null)
+const fileInput = ref(null)
 
 const newPartForm = ref({
   part_type_id: '',
@@ -327,7 +556,102 @@ const createPart = async () => {
   } catch (err) {}
 }
 
+// Bulk Import Handlers
+const openBulkModal = () => {
+  selectedFile.value = null
+  importResult.value = null
+  duplicateStrategy.value = 'skip'
+  showBulkModal.value = true
+}
+
+const handleFileSelect = (event) => {
+  const files = event.target.files
+  if (files && files.length > 0) {
+    selectedFile.value = files[0]
+    importResult.value = null
+  }
+}
+
+const handleFileDrop = (event) => {
+  isDragging.value = false
+  const files = event.dataTransfer.files
+  if (files && files.length > 0) {
+    selectedFile.value = files[0]
+    importResult.value = null
+  }
+}
+
+const removeFile = () => {
+  selectedFile.value = null
+  importResult.value = null
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
+}
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+const downloadTemplate = async (format) => {
+  downloadingTemplate.value = true
+  try {
+    const response = await partsApi.downloadTemplate(format)
+    const blob = new Blob([response.data], {
+      type: format === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'text/csv'
+    })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `parts_import_template.${format === 'xlsx' ? 'xlsx' : 'csv'}`)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    toast.success(`${format.toUpperCase()} template downloaded`)
+  } catch (err) {
+    toast.error('Failed to download template')
+  } finally {
+    downloadingTemplate.value = false
+  }
+}
+
+const submitBulkImport = async () => {
+  if (!selectedFile.value) return
+  isImporting.value = true
+  importResult.value = null
+
+  try {
+    const formData = new FormData()
+    formData.append('file', selectedFile.value)
+    formData.append('duplicate_strategy', duplicateStrategy.value)
+
+    const res = await partsApi.bulkImport(formData)
+    importResult.value = res.data
+
+    if (res.data.imported > 0 || res.data.updated > 0) {
+      toast.success(`Import complete: ${res.data.imported} added, ${res.data.updated} updated`)
+      await loadData()
+    } else if (res.data.errors && res.data.errors.length > 0) {
+      toast.warning(`Import completed with ${res.data.errors.length} errors`)
+    } else {
+      toast.info('No parts were modified')
+    }
+  } catch (err) {
+    // Handled by global interceptor or error response
+  } finally {
+    isImporting.value = false
+  }
+}
+
 onMounted(() => {
   loadData()
 })
 </script>
+

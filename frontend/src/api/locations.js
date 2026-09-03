@@ -1,6 +1,9 @@
 import apiClient from './client'
 
 export default {
+  getWarehouses() {
+    return apiClient.get('/locations/warehouses')
+  },
   getAll(params) {
     return apiClient.get('/locations', { params })
   },

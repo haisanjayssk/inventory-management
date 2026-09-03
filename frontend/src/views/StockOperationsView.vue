@@ -205,10 +205,26 @@
             </div>
           </div>
 
-          <!-- 4. Reference / PO -->
+          <!-- 4. Supplier / Vendor Code -->
           <div>
             <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-              4. PO / Invoice Reference
+              4. Supplier / Vendor <span class="text-slate-400 font-normal text-[11px]">(Optional)</span>
+            </label>
+            <select
+              v-model="receiveForm.vendor_id"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono"
+            >
+              <option value="">-- Direct Intake / Default Vendor --</option>
+              <option v-for="vend in vendorsList" :key="vend._id" :value="vend._id">
+                [{{ vend.vendor_code || vend._id }}] {{ vend.vendor_name }}
+              </option>
+            </select>
+          </div>
+
+          <!-- 5. Reference / PO -->
+          <div>
+            <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+              5. PO / Invoice Reference
             </label>
             <input
               v-model="receiveForm.reference_id"
@@ -218,11 +234,11 @@
             />
           </div>
 
-          <!-- 5. Quantity to Receive (if Bulk) -->
+          <!-- 6. Quantity to Receive (if Bulk) -->
           <div v-if="selectedPart?.tracking_type !== 'SERIAL'" class="md:col-span-2">
             <div class="flex items-center justify-between mb-1.5">
               <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                5. Quantity to Receive (PCS) <span class="text-rose-400">*</span>
+                6. Quantity to Receive (PCS) <span class="text-rose-400">*</span>
               </label>
               <span v-if="selectedReceiveBinItem" class="text-xs font-mono font-semibold text-emerald-400">
                 Current in Bin: <span class="font-bold underline">{{ selectedReceiveBinItem.quantity?.toLocaleString() }}</span> {{ selectedReceiveBinItem.unit_of_measure || 'PCS' }}
@@ -909,6 +925,7 @@ import partsApi from '@/api/parts'
 import lotsApi from '@/api/lots'
 import inventoryApi from '@/api/inventory'
 import locationsApi from '@/api/locations'
+import vendorsApi from '@/api/vendors'
 import stockApi from '@/api/stock'
 import cellsApi from '@/api/cells'
 import { useToastStore } from '@/stores/toast'
@@ -934,6 +951,7 @@ const tabs = [
 
 const partsList = ref([])
 const partLots = ref([])
+const vendorsList = ref([])
 const inventoryList = ref([])
 const cellMode = ref('range')
 const transferMode = ref('quantity')
@@ -953,6 +971,7 @@ const loadingReceiveStock = ref(false)
 // Forms
 const receiveForm = ref({
   part_id: '',
+  vendor_id: '',
   lot_batch_no: '',
   location_code: '',
   quantity: 1000,
@@ -1028,15 +1047,20 @@ const reservedInventoryList = computed(() => {
 })
 
 const loadData = async () => {
-  const [pRes, invRes] = await Promise.all([
+  const [pRes, invRes, vRes] = await Promise.all([
     partsApi.getAll(),
-    inventoryApi.getAll({ limit: 200 })
+    inventoryApi.getAll({ limit: 200 }),
+    vendorsApi.getAll()
   ])
   partsList.value = pRes.data || []
   inventoryList.value = invRes.data?.items || []
+  vendorsList.value = vRes.data || []
 }
 
 const onPartSelected = () => {
+  if (selectedPart.value?.vendor_id) {
+    receiveForm.value.vendor_id = selectedPart.value.vendor_id
+  }
   autoGenerateLot()
 }
 
@@ -1308,6 +1332,7 @@ const submitReceive = async () => {
   try {
     const payload = {
       part_id: receiveForm.value.part_id,
+      vendor_id: receiveForm.value.vendor_id || undefined,
       lot_batch_no: receiveForm.value.lot_batch_no,
       location_code: receiveForm.value.location_code,
       reference_id: receiveForm.value.reference_id

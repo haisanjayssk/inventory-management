@@ -62,3 +62,8 @@ class BaseRepository:
 
     def delete_one(self, filter_query: dict, session=None):
         return self.collection.delete_one(filter_query, session=session)
+
+    def bulk_write(self, operations: list, ordered: bool = True, session=None):
+        if not operations:
+            return None
+        return self.collection.bulk_write(operations, ordered=ordered, session=session)

@@ -46,6 +46,27 @@ class LocationService:
         """Builds standard location code like E11-1A."""
         return f"{warehouse_code}{bay}{row}-{rack}{section}"
 
+    def get_warehouses(self):
+        """Returns distinct list of warehouses with code, name, and total bins."""
+        locations = self.location_repo.find_all()
+        wh_map = {}
+        for loc in locations:
+            code = loc.get("warehouse_code")
+            if not code:
+                continue
+            name = loc.get("warehouse_name") or f"Warehouse {code}"
+            if code not in wh_map:
+                wh_map[code] = {
+                    "warehouse_code": code,
+                    "warehouse_name": name,
+                    "total_bins": 0
+                }
+            wh_map[code]["total_bins"] += 1
+            if loc.get("warehouse_name"):
+                wh_map[code]["warehouse_name"] = loc.get("warehouse_name")
+
+        return sorted(list(wh_map.values()), key=lambda w: w["warehouse_code"])
+
     def get_all_locations(self, warehouse_code: str = None, status: str = None):
         query = {}
         if warehouse_code:

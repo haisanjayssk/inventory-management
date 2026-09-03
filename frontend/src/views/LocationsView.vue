@@ -34,8 +34,13 @@
           class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
         >
           <option value="">All Warehouses</option>
-          <option value="E">EMS Warehouse (E)</option>
-          <option value="BP">Battery Pack Store (BP)</option>
+          <option
+            v-for="wh in warehouseList"
+            :key="wh.warehouse_code"
+            :value="wh.warehouse_code"
+          >
+            {{ wh.warehouse_name }} ({{ wh.warehouse_code }})
+          </option>
         </select>
 
         <select
@@ -343,6 +348,7 @@ import { useToastStore } from '@/stores/toast'
 import { Wand2, Radio, ArrowRight, Layers, Plus, Trash2 } from 'lucide-vue-next'
 
 const locations = ref([])
+const warehouseList = ref([])
 const filterWarehouse = ref('')
 const filterStatus = ref('')
 const showBulkModal = ref(false)
@@ -406,6 +412,13 @@ const estimatedBulkCount = computed(() => {
   }
 })
 
+const loadWarehouses = async () => {
+  try {
+    const res = await locationsApi.getWarehouses()
+    warehouseList.value = res.data || []
+  } catch (e) {}
+}
+
 const loadLocations = async () => {
   const params = {}
   if (filterWarehouse.value) params.warehouse_code = filterWarehouse.value
@@ -438,7 +451,7 @@ const generateBulkLocations = async () => {
     const res = await locationsApi.bulkGenerate(payload)
     toast.success(res.message || 'Locations generated successfully')
     showBulkModal.value = false
-    await loadLocations()
+    await Promise.all([loadWarehouses(), loadLocations()])
   } catch (err) {}
 }
 
@@ -458,6 +471,7 @@ const onNfcResolved = (loc) => {
 }
 
 onMounted(() => {
+  loadWarehouses()
   loadLocations()
 })
 </script>
