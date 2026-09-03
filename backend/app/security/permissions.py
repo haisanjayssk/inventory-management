@@ -26,12 +26,13 @@ def require_roles(*allowed_roles):
                 )
 
             user_role = current_user.get("role", "VIEWER")
-            if user_role not in allowed_roles and "ADMIN" not in allowed_roles and user_role != "ADMIN":
+            if user_role not in allowed_roles and user_role != "ADMIN":
                 return error_response(
                     error_code="FORBIDDEN",
                     message=f"Access denied. Required roles: {', '.join(allowed_roles)}",
                     status_code=403
                 )
+
 
             return f(*args, **kwargs)
         return decorated_function

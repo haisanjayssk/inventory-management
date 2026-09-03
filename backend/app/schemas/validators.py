@@ -14,6 +14,18 @@ class UserRegisterSchema(Schema):
         validate=validate.OneOf(["ADMIN", "INVENTORY_MANAGER", "STORE_OPERATOR", "VIEWER"])
     )
 
+class UserUpdateSchema(Schema):
+    full_name = fields.String(validate=validate.Length(min=2, max=100))
+    email = fields.Email()
+    role = fields.String(
+        validate=validate.OneOf(["ADMIN", "INVENTORY_MANAGER", "STORE_OPERATOR", "VIEWER"])
+    )
+    active = fields.Boolean()
+
+class UserPasswordResetSchema(Schema):
+    new_password = fields.String(required=True, validate=validate.Length(min=6))
+
+
 class PartTypeFieldSchema(Schema):
     field_name = fields.String(required=True)
     field_key = fields.String(required=True)

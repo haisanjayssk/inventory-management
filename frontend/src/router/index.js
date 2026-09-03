@@ -13,6 +13,7 @@ import LotsView from '@/views/LotsView.vue'
 import VendorsView from '@/views/VendorsView.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
 import ReportsView from '@/views/ReportsView.vue'
+import UsersView from '@/views/UsersView.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
@@ -27,8 +28,10 @@ const routes = [
   { path: '/vendors', name: 'vendors', component: VendorsView },
   { path: '/transactions', name: 'transactions', component: TransactionsView },
   { path: '/reports', name: 'reports', component: ReportsView },
+  { path: '/users', name: 'users', component: UsersView },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
+
 
 const router = createRouter({
   history: createWebHistory(),

@@ -61,7 +61,7 @@
 import { computed } from 'vue'
 import {
   LayoutDashboard, ArrowLeftRight, Boxes, BatteryCharging,
-  Layers, Sliders, MapPin, Building2, History, BarChart3, X, Cpu
+  Layers, Sliders, MapPin, Building2, History, BarChart3, Users, X, Cpu
 } from 'lucide-vue-next'
 
 defineProps({
@@ -82,5 +82,7 @@ const navItems = [
   { label: 'Vendors', path: '/vendors', icon: Building2 },
   { label: 'Transactions Audit', path: '/transactions', icon: History },
   { label: 'Reports', path: '/reports', icon: BarChart3 },
+  { label: 'User Management', path: '/users', icon: Users, badge: 'ADMIN' },
 ]
 </script>
+

@@ -2,15 +2,22 @@ import io
 import csv
 import json
 from datetime import datetime, timezone
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
 from pymongo import InsertOne, UpdateOne
+
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    openpyxl = None
+    OPENPYXL_AVAILABLE = False
 
 from app.repositories.part_repository import (
     PartTypeRepository, PartTypeFieldRepository, VendorRepository, PartRepository, LotRepository
 )
 from app.models.counter import SequenceCounter
+
 
 
 class PartService:
@@ -366,9 +373,12 @@ class PartService:
         ]
 
         if file_format.lower() in ["xlsx", "excel"]:
+            if not OPENPYXL_AVAILABLE:
+                raise ValueError("Excel template generation requires 'openpyxl'. Please install openpyxl or download CSV format.")
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Parts Catalog Template"
+
 
             # Header styling
             header_fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
@@ -425,8 +435,11 @@ class PartService:
             except Exception as e:
                 raise ValueError(f"Invalid JSON file format: {str(e)}")
         elif lower_name.endswith(".xlsx") or lower_name.endswith(".xls"):
+            if not OPENPYXL_AVAILABLE:
+                raise ValueError("Excel file reading requires 'openpyxl'. Please install openpyxl or upload a CSV file.")
             try:
                 wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+
                 ws = wb.active
                 iter_rows = list(ws.iter_rows(values_only=True))
                 if not iter_rows:
