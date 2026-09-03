@@ -21,3 +21,20 @@ def test_bulk_location_generator(client, admin_token):
     assert res.status_code == 201
     # 2 bays * 2 rows * 2 racks * 2 sections = 16 locations
     assert res.json["data"]["generated_count"] == 16
+
+def test_bulk_location_generator_without_sections(client, admin_token):
+    res = client.post("/api/v1/locations/bulk-generate", headers={"Authorization": f"Bearer {admin_token}"}, json={
+        "warehouse_name": "Single Rack Store",
+        "warehouse_code": "SR",
+        "bays": ["1"],
+        "rows_count": 3,
+        "racks_count": 2,
+        "sections": [] # No sections
+    })
+    assert res.status_code == 201
+    # 1 bay * 3 rows * 2 racks * 1 = 6 locations
+    assert res.json["data"]["generated_count"] == 6
+    locs = res.json["data"]["locations"]
+    assert any(l["location_code"] == "SR11-1" for l in locs)
+    assert any(l["location_code"] == "SR13-2" for l in locs)
+

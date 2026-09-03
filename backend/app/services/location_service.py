@@ -42,9 +42,10 @@ class LocationService:
                 return candidate
         return clean_name[:3]
 
-    def build_location_code(self, warehouse_code: str, bay: str, row: int, rack: int, section: str) -> str:
-        """Builds standard location code like E11-1A."""
-        return f"{warehouse_code}{bay}{row}-{rack}{section}"
+    def build_location_code(self, warehouse_code: str, bay: str, row: int, rack: int, section: str = "") -> str:
+        """Builds standard location code like E11-1A (with section) or E11-1 (without section)."""
+        sec = str(section).strip().upper() if section else ""
+        return f"{warehouse_code}{bay}{row}-{rack}{sec}"
 
     def get_warehouses(self):
         """Returns distinct list of warehouses with code, name, and total bins."""
@@ -118,7 +119,7 @@ class LocationService:
         bay = str(data["bay_number"]).strip()
         row = int(data["row_number"])
         rack = int(data["rack_number"])
-        section = str(data["section_code"]).strip().upper()
+        section = str(data.get("section_code") or "").strip().upper()
 
         loc_code = data.get("location_code") or self.build_location_code(wh_code, bay, row, rack, section)
         if self.location_repo.find_by_code(loc_code):
@@ -147,7 +148,10 @@ class LocationService:
         wh_name = data["warehouse_name"].strip()
         wh_code = (data.get("warehouse_code") or self.generate_warehouse_code(wh_name)).upper()
         racks_count = int(data["racks_count"])
-        sections = data["sections"] # e.g. ["A", "B", "C"]
+        sections = data.get("sections") or []
+        clean_sections = [str(s).strip().upper() for s in sections if str(s).strip()]
+        if not clean_sections:
+            clean_sections = [""] # Single rack without sub-sections
 
         # Support both custom bay configs and uniform bays
         bay_configs = data.get("bay_configs")
@@ -160,7 +164,7 @@ class LocationService:
             raise ValueError("At least one bay configuration must be provided")
 
         total_to_generate = sum(
-            int(cfg["rows_count"]) * racks_count * len(sections)
+            int(cfg["rows_count"]) * racks_count * len(clean_sections)
             for cfg in bay_configs
         )
         if total_to_generate > 2000:
@@ -177,8 +181,8 @@ class LocationService:
             rows_for_bay = int(cfg["rows_count"])
             for row in range(1, rows_for_bay + 1):
                 for rack in range(1, racks_count + 1):
-                    for section in sections:
-                        loc_code = self.build_location_code(wh_code, bay, row, rack, str(section).upper())
+                    for section in clean_sections:
+                        loc_code = self.build_location_code(wh_code, bay, row, rack, section)
                         
                         # Skip if already exists
                         if self.location_repo.find_by_code(loc_code):
@@ -192,7 +196,7 @@ class LocationService:
                             "bay_number": bay,
                             "row_number": row,
                             "rack_number": rack,
-                            "section_code": str(section).upper(),
+                            "section_code": section,
                             "nfc_tag_uid": f"inventory://location/{loc_code}",
                             "status": "ACTIVE",
                             "created_at": now,
@@ -203,6 +207,7 @@ class LocationService:
 
         if created_docs:
             self.location_repo.insert_many(created_docs)
+
 
         return {
             "warehouse_code": wh_code,

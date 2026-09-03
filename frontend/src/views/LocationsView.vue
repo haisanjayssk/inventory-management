@@ -81,8 +81,9 @@
           <div class="space-y-0.5 text-[11px] text-slate-400 font-mono">
             <div>Wh: <span class="text-slate-200">{{ loc.warehouse_code }}</span> | Bay: <span class="text-slate-200">{{ loc.bay_number }}</span></div>
             <div>Row: <span class="text-slate-200">{{ loc.row_number }}</span> | Rack: <span class="text-slate-200">{{ loc.rack_number }}</span></div>
-            <div>Sec: <span class="text-slate-200">{{ loc.section_code }}</span></div>
+            <div>Sec: <span class="text-slate-200">{{ loc.section_code || 'None' }}</span></div>
           </div>
+
         </div>
 
         <div class="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
@@ -105,7 +106,7 @@
 
       <form @submit.prevent="generateBulkLocations" class="space-y-4">
         <p class="text-xs text-slate-400">
-          Automatically generate structured location codes (e.g. <span class="font-mono text-emerald-400">E11-1A</span>) and pre-map default NFC tags (<span class="font-mono text-emerald-400">inventory://location/E11-1A</span>).
+          Automatically generate structured location codes (e.g. <span class="font-mono text-emerald-400">E11-1A</span> with sections, or <span class="font-mono text-emerald-400">E11-1</span> for single racks) and pre-map default NFC tags (<span class="font-mono text-emerald-400">inventory://location/E11-1A</span>).
         </p>
 
         <!-- Mode Selector: Uniform vs Custom per Bay -->
@@ -151,15 +152,18 @@
           </div>
 
           <div>
-            <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Sections per Rack</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs font-bold text-slate-300 uppercase">Sections per Rack</label>
+              <span class="text-[10px] text-slate-400">Optional</span>
+            </div>
             <input
               v-model="bulkForm.sectionsInput"
               type="text"
-              required
-              placeholder="A, B, C"
+              placeholder="e.g. A, B (Leave blank for single rack)"
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
             />
           </div>
+
 
           <div>
             <label class="block text-xs font-bold text-slate-300 uppercase mb-1">Racks per Row (1-20)</label>
@@ -253,9 +257,10 @@
 
               <div class="w-36 text-right pt-3">
                 <span class="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-2 py-1 rounded block">
-                  {{ (cfg.rows_count || 0) * (bulkForm.racks_count || 0) * parsedSections.length }} Bins (E{{ cfg.bay }}1..E{{ cfg.bay }}{{ cfg.rows_count }})
+                  {{ (cfg.rows_count || 0) * (bulkForm.racks_count || 0) * (parsedSections.length > 0 ? parsedSections.length : 1) }} Bins ({{ (bulkForm.warehouse_code || 'E').toUpperCase() }}{{ cfg.bay }}1..{{ (bulkForm.warehouse_code || 'E').toUpperCase() }}{{ cfg.bay }}{{ cfg.rows_count }})
                 </span>
               </div>
+
 
               <div class="pt-3">
                 <button
@@ -390,15 +395,17 @@ const occupiedCount = computed(() => {
 })
 
 const parsedSections = computed(() => {
-  return (bulkForm.value.sectionsInput || '')
+  const text = (bulkForm.value.sectionsInput || '').trim()
+  if (!text) return []
+  return text
     .split(',')
     .map(s => s.trim().toUpperCase())
     .filter(Boolean)
 })
 
 const estimatedBulkCount = computed(() => {
-  const racks = bulkForm.value.racks_count || 0
-  const secCount = parsedSections.value.length
+  const racks = Number(bulkForm.value.racks_count) || 0
+  const secCount = parsedSections.value.length > 0 ? parsedSections.value.length : 1
 
   if (generatorMode.value === 'custom') {
     return customBayConfigs.value.reduce((acc, cfg) => {
@@ -407,10 +414,11 @@ const estimatedBulkCount = computed(() => {
     }, 0)
   } else {
     const bays = (bulkForm.value.baysInput || '').split(',').map(s => s.trim()).filter(Boolean)
-    const rows = bulkForm.value.rows_count || 0
+    const rows = Number(bulkForm.value.rows_count) || 0
     return bays.length * rows * racks * secCount
   }
 })
+
 
 const loadWarehouses = async () => {
   try {

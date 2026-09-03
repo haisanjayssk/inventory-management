@@ -42,19 +42,16 @@
 
     <!-- System Status Footer -->
     <div class="p-3 border-t border-slate-800 text-[11px] text-slate-400 bg-slate-950/40">
-      <div class="flex items-center justify-between mb-1">
+      <div class="flex items-center justify-between">
         <span class="font-medium">NFC Engine</span>
         <span class="inline-flex items-center gap-1 text-emerald-400 font-mono">
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
           ACTIVE
         </span>
       </div>
-      <div class="flex items-center justify-between text-slate-400 text-[10px]">
-        <span>Storage Model</span>
-        <span class="font-mono">E11-1A (EMS)</span>
-      </div>
     </div>
   </aside>
+
 </template>
 
 <script setup>

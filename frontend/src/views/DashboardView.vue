@@ -96,12 +96,12 @@
           </div>
         </div>
 
-        <div class="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
-          <span class="text-slate-400">Hierarchy: <span class="text-slate-300 font-mono">EMS E11-1A</span></span>
+        <div class="mt-4 pt-3 border-t border-slate-800 flex justify-end items-center text-xs">
           <router-link to="/locations" class="text-emerald-400 hover:text-emerald-300 font-semibold">
             Manage Locations &rarr;
           </router-link>
         </div>
+
       </div>
 
       <!-- Movement Operations Ratio -->
