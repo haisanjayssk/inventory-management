@@ -11,9 +11,10 @@ part_service = PartService()
 @lots_bp.route("", methods=["GET"])
 @jwt_required(optional=True)
 def get_lots():
-    part_id = request.args.get("part_id")
+    org_id = getattr(request, "organization_id", None) or request.args.get("organization_id", "ORG-001")
+    part_id = request.args.get("part_id") or request.args.get("item_id")
     try:
-        lots = part_service.get_all_lots(part_id)
+        lots = part_service.get_all_lots(part_id, org_id=org_id)
         return success_response(lots)
     except Exception as e:
         return error_response("FETCH_ERROR", str(e), 500)
@@ -21,8 +22,9 @@ def get_lots():
 @lots_bp.route("/<string:lot_id>", methods=["GET"])
 @jwt_required(optional=True)
 def get_lot(lot_id):
+    org_id = getattr(request, "organization_id", None) or request.args.get("organization_id", "ORG-001")
     try:
-        lot = part_service.get_lot_by_id(lot_id)
+        lot = part_service.get_lot_by_id(lot_id, org_id=org_id)
         return success_response(lot)
     except Exception as e:
         return error_response("NOT_FOUND", str(e), 404)

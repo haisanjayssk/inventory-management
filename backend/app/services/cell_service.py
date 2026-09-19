@@ -65,6 +65,42 @@ class CellService:
             cell = self.cell_repo.find_by_id(identifier.strip())
 
         if not cell:
+            from app.repositories.inventory_repository import InventoryRepository
+            inv_repo = InventoryRepository()
+            inv = inv_repo.find_one({"$or": [{"serial_number": identifier.strip()}, {"_id": identifier.strip()}]})
+            if inv and inv.get("serial_number"):
+                loc = self.location_repo.find_by_id(inv.get("location_id"))
+                part = self.part_repo.find_by_id(inv.get("item_id") or inv.get("part_id"))
+                txns = self.txn_repo.get_history_for_serial("ORG-001", inv["serial_number"]) if hasattr(self.txn_repo, "get_history_for_serial") else []
+                mes_traceability = [
+                    {"step": "RECEIVE", "status": "COMPLETED", "timestamp": inv.get("created_at"), "notes": f"Material intake at {loc.get('location_code') if loc else 'Store'}"},
+                    {"step": "CDC_TEST", "status": "PENDING", "timestamp": None, "notes": "Capacity, Internal Resistance & OCV Test"},
+                    {"step": "GRADING_SORTING", "status": "PENDING", "timestamp": None, "notes": "Cell grouping and bin sorting"},
+                    {"step": "MODULE_STACKING", "status": "PENDING", "timestamp": None, "notes": "Laser welding & insulation bracket compression"},
+                    {"step": "PACK_INTEGRATION", "status": "PENDING", "timestamp": None, "notes": "BMS wiring and final battery pack build"}
+                ]
+                return {
+                    "cell": {
+                        "_id": inv["_id"],
+                        "cell_serial_no": inv["serial_number"],
+                        "part_id": inv.get("item_id") or inv.get("part_id"),
+                        "part_code": part.get("code") or part.get("part_code") if part else None,
+                        "part_name": part.get("name") or part.get("part_name") if part else None,
+                        "part_attributes": part.get("attributes") if part else {},
+                        "lot_id": inv.get("lot_number") or inv.get("lot_id"),
+                        "lot_batch_no": inv.get("lot_number") or inv.get("lot_id"),
+                        "location": loc,
+                        "status": inv.get("status", "AVAILABLE"),
+                        "manufacturing_date": inv.get("manufacturing_date"),
+                        "date_code": inv.get("date_code"),
+                        "created_at": inv.get("created_at"),
+                        "updated_at": inv.get("updated_at")
+                    },
+                    "history": txns,
+                    "mes_traceability": mes_traceability
+                }
+
+        if not cell:
             raise ValueError(f"Cell '{identifier}' not found")
 
         c_id = cell["_id"]

@@ -507,8 +507,8 @@
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-amber-500"
             >
               <option value="" disabled>-- Select Lot --</option>
-              <option v-for="lot in partLots" :key="lot._id" :value="lot._id">
-                Lot: {{ lot.lot_batch_no }} (Received: {{ lot.received_date || 'N/A' }})
+              <option v-for="lot in partLots" :key="lot._id || lot.lot_batch_no" :value="lot.lot_batch_no || lot._id">
+                Lot: {{ lot.lot_batch_no || lot._id }} (Available: {{ lot.available_quantity?.toLocaleString() || lot.quantity || 'In Stock' }})
               </option>
             </select>
           </div>
@@ -643,8 +643,8 @@
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
             >
               <option value="" disabled>-- Select Lot --</option>
-              <option v-for="lot in partLots" :key="lot._id" :value="lot._id">
-                Lot: {{ lot.lot_batch_no }}
+              <option v-for="lot in partLots" :key="lot._id || lot.lot_batch_no" :value="lot.lot_batch_no || lot._id">
+                Lot: {{ lot.lot_batch_no || lot._id }} (Available: {{ lot.available_quantity?.toLocaleString() || lot.quantity || 'In Stock' }})
               </option>
             </select>
           </div>
@@ -1232,9 +1232,21 @@ const selectReceiveBinItem = (item) => {
 const selectBinItem = async (item) => {
   if (!item) return
   selectedBinItem.value = item
-  issueForm.value.part_id = item.part_id
+  issueForm.value.part_id = item.part_id || item.item_id
   await loadLotsForIssue()
-  issueForm.value.lot_id = item.lot_id
+
+  const lotVal = item.lot_batch_no || item.lot_number || item.lot_id
+  issueForm.value.lot_id = lotVal
+
+  if (lotVal && !partLots.value.some(l => (l.lot_batch_no === lotVal || l._id === lotVal || l.lot_number === lotVal))) {
+    partLots.value.push({
+      _id: lotVal,
+      lot_batch_no: lotVal,
+      lot_number: lotVal,
+      lot_id: lotVal,
+      available_quantity: item.available_quantity || item.quantity
+    })
+  }
 
   if (!issueForm.value.reference_id) {
     const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')

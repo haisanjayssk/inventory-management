@@ -1,8 +1,12 @@
 <template>
   <div class="space-y-6">
+    <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <h1 class="text-xl sm:text-2xl font-black text-white tracking-tight">Warehouse Locations & NFC Hierarchy</h1>
+        <h1 class="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+          <Building2 class="w-6 h-6 text-emerald-400" />
+          <span>Warehouse Locations & NFC Hierarchy</span>
+        </h1>
         <p class="text-xs text-slate-400 mt-0.5">Physical storage bins, NFC tag identifiers, and real-time bin occupancy</p>
       </div>
 
@@ -25,13 +29,97 @@
       </div>
     </div>
 
-    <!-- Warehouse Filter & Stats -->
+    <!-- Warehouses Overview Cards -->
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+          <Boxes class="w-3.5 h-3.5 text-emerald-400" />
+          <span>Warehouses ({{ warehouseList.length }})</span>
+        </h2>
+        <span class="text-[11px] text-slate-500 font-mono">Select a warehouse to filter bins</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <!-- All Warehouses Card -->
+        <div
+          @click="selectWarehouse('')"
+          class="p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between"
+          :class="filterWarehouse === '' ? 'bg-emerald-950/30 border-emerald-500 shadow-md shadow-emerald-950/20' : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'"
+        >
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-bold text-slate-200">All Warehouses</span>
+              <span
+                class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                :class="filterWarehouse === '' ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'"
+              >
+                ALL
+              </span>
+            </div>
+            <div class="text-2xl font-black text-white font-mono">{{ totalAllBins }} <span class="text-xs font-normal text-slate-400">total bins</span></div>
+          </div>
+          <div class="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+            <span>Occupied: <b class="text-emerald-400 font-mono">{{ totalAllOccupied }}</b></span>
+            <span>Empty: <b class="text-slate-300 font-mono">{{ totalAllBins - totalAllOccupied }}</b></span>
+          </div>
+        </div>
+
+        <!-- Individual Warehouse Cards -->
+        <div
+          v-for="wh in warehouseList"
+          :key="wh.warehouse_code"
+          @click="selectWarehouse(wh.warehouse_code)"
+          class="p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between"
+          :class="filterWarehouse === wh.warehouse_code ? 'bg-emerald-950/30 border-emerald-500 shadow-md shadow-emerald-950/20' : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'"
+        >
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-bold text-white truncate max-w-[140px]">{{ wh.warehouse_name }}</span>
+              <span
+                class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                :class="filterWarehouse === wh.warehouse_code ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-emerald-400'"
+              >
+                WH-{{ wh.warehouse_code }}
+              </span>
+            </div>
+            <div class="text-2xl font-black text-white font-mono">{{ wh.total_bins || 0 }} <span class="text-xs font-normal text-slate-400">bins</span></div>
+          </div>
+
+          <div class="mt-3 pt-2.5 border-t border-slate-800/80 space-y-1.5 text-[11px]">
+            <div class="flex items-center justify-between text-slate-400">
+              <span>Bays: <b class="text-slate-200 font-mono">{{ wh.total_bays || wh.bays?.length || 0 }}</b></span>
+              <span>Occupied: <b class="text-emerald-400 font-mono">{{ wh.occupied_bins || 0 }}</b></span>
+            </div>
+            <!-- Occupancy bar -->
+            <div class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+              <div
+                class="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
+                :style="{ width: wh.total_bins ? `${Math.round(((wh.occupied_bins || 0) / wh.total_bins) * 100)}%` : '0%' }"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Storage Bins & Filter Bar -->
     <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
-      <div class="flex items-center gap-3 w-full sm:w-auto">
+      <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+        <!-- Search -->
+        <div class="relative min-w-[180px]">
+          <Search class="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Search bin code (e.g. E11)..."
+            class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+          />
+        </div>
+
         <select
           v-model="filterWarehouse"
           @change="loadLocations"
-          class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+          class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
         >
           <option value="">All Warehouses</option>
           <option
@@ -46,7 +134,7 @@
         <select
           v-model="filterStatus"
           @change="loadLocations"
-          class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+          class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
         >
           <option value="">All Statuses</option>
           <option value="ACTIVE">ACTIVE</option>
@@ -54,17 +142,36 @@
         </select>
       </div>
 
-      <div class="text-xs font-mono text-slate-400 flex gap-4">
-        <span>Total: <b class="text-white">{{ locations.length }}</b></span>
+      <div class="text-xs font-mono text-slate-400 flex gap-4 w-full sm:w-auto justify-end">
+        <span>Bins: <b class="text-white">{{ filteredLocations.length }}</b></span>
         <span>Occupied: <b class="text-emerald-400">{{ occupiedCount }}</b></span>
-        <span>Empty: <b class="text-slate-300">{{ locations.length - occupiedCount }}</b></span>
+        <span>Empty: <b class="text-slate-300">{{ filteredLocations.length - occupiedCount }}</b></span>
       </div>
     </div>
 
+    <!-- Loading State -->
+    <div v-if="loading" class="p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-3">
+      <div class="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      <span class="text-xs font-mono">Loading storage locations...</span>
+    </div>
+
+    <!-- Empty State -->
+    <div v-else-if="filteredLocations.length === 0" class="p-12 text-center bg-slate-900/60 border border-slate-800 rounded-2xl space-y-3">
+      <MapPin class="w-8 h-8 text-slate-600 mx-auto" />
+      <p class="text-xs text-slate-400">No warehouse storage bins found for this filter.</p>
+      <button
+        @click="showBulkModal = true"
+        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-lg shadow transition"
+      >
+        <Wand2 class="w-3.5 h-3.5" />
+        <span>Generate Storage Bins</span>
+      </button>
+    </div>
+
     <!-- Locations Grid -->
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+    <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
       <div
-        v-for="loc in locations"
+        v-for="loc in filteredLocations"
         :key="loc._id"
         class="bg-slate-900 border rounded-2xl p-3.5 shadow transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between"
         :class="loc.is_occupied ? 'border-emerald-500/40 bg-emerald-950/10' : 'border-slate-800'"
@@ -75,6 +182,7 @@
             <span
               class="w-2 h-2 rounded-full"
               :class="loc.is_occupied ? 'bg-emerald-400 shadow-sm shadow-emerald-400' : 'bg-slate-700'"
+              :title="loc.is_occupied ? 'Occupied' : 'Empty'"
             ></span>
           </div>
 
@@ -83,7 +191,6 @@
             <div>Row: <span class="text-slate-200">{{ loc.row_number }}</span> | Rack: <span class="text-slate-200">{{ loc.rack_number }}</span></div>
             <div>Sec: <span class="text-slate-200">{{ loc.section_code || 'None' }}</span></div>
           </div>
-
         </div>
 
         <div class="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
@@ -304,13 +411,13 @@
             No bulk inventory at this location.
           </div>
           <div v-for="inv in selectedLoc.inventory" :key="inv._id" class="p-2 rounded-lg bg-slate-950 border border-slate-800 text-xs flex justify-between">
-            <span class="font-mono text-white">{{ inv.part_code || inv.part_id }} (Lot: {{ inv.lot_batch_no || inv.lot_id }})</span>
+            <span class="font-mono text-white">{{ inv.part_code || inv.item_code || inv.part_id }} (Lot: {{ inv.lot_batch_no || inv.lot_number }})</span>
             <span class="font-mono font-bold text-emerald-400">{{ inv.quantity || inv.available_quantity }} {{ inv.unit_of_measure || 'PCS' }}</span>
           </div>
         </div>
 
         <div>
-          <h4 class="text-xs font-bold uppercase text-slate-300 mb-2">Stored Battery Cells</h4>
+          <h4 class="text-xs font-bold uppercase text-slate-300 mb-2">Stored Serial Items / Battery Cells</h4>
           <div v-if="!selectedLoc.cells || selectedLoc.cells.length === 0" class="text-xs text-slate-500">
             No battery cells at this location.
           </div>
@@ -320,7 +427,7 @@
               :key="cell._id"
               class="px-2 py-0.5 bg-slate-950 border border-slate-800 rounded text-[11px] font-mono text-emerald-300"
             >
-              {{ cell.cell_id }}
+              {{ cell.serial_number || cell.cell_id }}
             </span>
           </div>
         </div>
@@ -350,12 +457,14 @@ import locationsApi from '@/api/locations'
 import Modal from '@/components/Modal.vue'
 import NfcReaderModal from '@/components/NfcReaderModal.vue'
 import { useToastStore } from '@/stores/toast'
-import { Wand2, Radio, ArrowRight, Layers, Plus, Trash2 } from 'lucide-vue-next'
+import { Wand2, Radio, ArrowRight, Layers, Plus, Trash2, Building2, Boxes, Search, MapPin } from 'lucide-vue-next'
 
 const locations = ref([])
 const warehouseList = ref([])
 const filterWarehouse = ref('')
 const filterStatus = ref('')
+const searchQuery = ref('')
+const loading = ref(false)
 const showBulkModal = ref(false)
 const showDetailModal = ref(false)
 const showNfcModal = ref(false)
@@ -390,8 +499,35 @@ const removeBayConfig = (index) => {
   }
 }
 
+const selectWarehouse = (whCode) => {
+  filterWarehouse.value = whCode
+  loadLocations()
+}
+
+const totalAllBins = computed(() => {
+  return warehouseList.value.reduce((acc, wh) => acc + (wh.total_bins || 0), 0)
+})
+
+const totalAllOccupied = computed(() => {
+  return warehouseList.value.reduce((acc, wh) => acc + (wh.occupied_bins || 0), 0)
+})
+
+const filteredLocations = computed(() => {
+  let list = locations.value.filter(l => l.type !== 'WAREHOUSE')
+  if (searchQuery.value) {
+    const q = searchQuery.value.trim().toLowerCase()
+    list = list.filter(l =>
+      (l.location_code && l.location_code.toLowerCase().includes(q)) ||
+      (l.warehouse_code && l.warehouse_code.toLowerCase().includes(q)) ||
+      (l.bay_number && String(l.bay_number).toLowerCase().includes(q)) ||
+      (l.nfc_tag_uid && l.nfc_tag_uid.toLowerCase().includes(q))
+    )
+  }
+  return list
+})
+
 const occupiedCount = computed(() => {
-  return locations.value.filter(l => l.is_occupied).length
+  return filteredLocations.value.filter(l => l.is_occupied).length
 })
 
 const parsedSections = computed(() => {
@@ -419,7 +555,6 @@ const estimatedBulkCount = computed(() => {
   }
 })
 
-
 const loadWarehouses = async () => {
   try {
     const res = await locationsApi.getWarehouses()
@@ -428,12 +563,18 @@ const loadWarehouses = async () => {
 }
 
 const loadLocations = async () => {
-  const params = {}
-  if (filterWarehouse.value) params.warehouse_code = filterWarehouse.value
-  if (filterStatus.value) params.status = filterStatus.value
+  loading.value = true
+  try {
+    const params = {}
+    if (filterWarehouse.value) params.warehouse_code = filterWarehouse.value
+    if (filterStatus.value) params.status = filterStatus.value
 
-  const res = await locationsApi.getAll(params)
-  locations.value = res.data || []
+    const res = await locationsApi.getAll(params)
+    locations.value = res.data || []
+  } catch (e) {
+  } finally {
+    loading.value = false
+  }
 }
 
 const generateBulkLocations = async () => {

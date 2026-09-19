@@ -1,231 +1,251 @@
 from datetime import datetime, timezone
 from app.repositories.location_repository import LocationRepository
 from app.repositories.inventory_repository import InventoryRepository
-from app.repositories.cell_repository import CellInventoryRepository
-from app.repositories.part_repository import PartRepository, LotRepository
+from app.repositories.item_repository import ItemRepository
 from app.models.counter import SequenceCounter
 
 class LocationService:
     def __init__(self):
         self.location_repo = LocationRepository()
         self.inventory_repo = InventoryRepository()
-        self.cell_inventory_repo = CellInventoryRepository()
-        self.part_repo = PartRepository()
-        self.lot_repo = LotRepository()
+        self.item_repo = ItemRepository()
 
-    def _enrich_inventory(self, loc_id: str):
-        items = self.inventory_repo.find_by_location(loc_id)
+    def _enrich_inventory(self, loc_id: str, org_id: str = "ORG-001"):
+        items = self.inventory_repo.find_by_location(org_id, loc_id)
         enriched = []
         for inv in items:
-            part = self.part_repo.find_by_id(inv.get("part_id"))
-            lot = self.lot_repo.find_by_id(inv.get("lot_id"))
+            item = self.item_repo.find_one({"_id": inv.get("item_id"), "organization_id": org_id})
             enriched.append({
                 **inv,
-                "part_code": part.get("part_code") if part else None,
-                "part_name": part.get("part_name") if part else None,
-                "unit_of_measure": part.get("unit_of_measure", "PCS") if part else "PCS",
-                "lot_batch_no": lot.get("lot_batch_no") if lot else None
+                "part_id": inv.get("item_id"),
+                "item_code": item.get("code") if item else None,
+                "part_code": item.get("code") if item else None,
+                "part_name": item.get("name") if item else None,
+                "lot_batch_no": inv.get("lot_number"),
+                "available_quantity": inv.get("quantity", 0)
             })
         return enriched
 
-    def generate_warehouse_code(self, warehouse_name: str) -> str:
-        """Derives a unique warehouse code prefix, e.g. EMS -> E, MES -> ME."""
-        clean_name = warehouse_name.strip().upper()
-        # Find existing warehouse codes
-        existing_locations = self.location_repo.find_all()
-        existing_wh_codes = {loc.get("warehouse_code") for loc in existing_locations if loc.get("warehouse_code")}
-
-        # Try 1 letter, then 2, then 3
-        for length in range(1, len(clean_name) + 1):
-            candidate = clean_name[:length]
-            if candidate not in existing_wh_codes:
-                return candidate
-        return clean_name[:3]
-
-    def build_location_code(self, warehouse_code: str, bay: str, row: int, rack: int, section: str = "") -> str:
-        """Builds standard location code like E11-1A (with section) or E11-1 (without section)."""
-        sec = str(section).strip().upper() if section else ""
-        return f"{warehouse_code}{bay}{row}-{rack}{sec}"
-
-    def get_warehouses(self):
-        """Returns distinct list of warehouses with code, name, and total bins."""
-        locations = self.location_repo.find_all()
+    def get_warehouses(self, org_id: str = "ORG-001"):
+        locations = self.location_repo.find_all_by_org(org_id)
         wh_map = {}
         for loc in locations:
-            code = loc.get("warehouse_code")
+            code = loc.get("warehouse_code") or (loc.get("location_code", "")[3:] if loc.get("location_code", "").startswith("WH-") else loc.get("location_code", "")[:1])
             if not code:
                 continue
-            name = loc.get("warehouse_name") or f"Warehouse {code}"
+            name = loc.get("warehouse_name") or (loc.get("name") if loc.get("type") == "WAREHOUSE" else None) or f"Warehouse {code}"
             if code not in wh_map:
                 wh_map[code] = {
                     "warehouse_code": code,
                     "warehouse_name": name,
-                    "total_bins": 0
+                    "total_bins": 0,
+                    "occupied_bins": 0,
+                    "bays": set(),
                 }
-            wh_map[code]["total_bins"] += 1
-            if loc.get("warehouse_name"):
-                wh_map[code]["warehouse_name"] = loc.get("warehouse_name")
+            elif name and wh_map[code]["warehouse_name"] == f"Warehouse {code}":
+                wh_map[code]["warehouse_name"] = name
 
-        return sorted(list(wh_map.values()), key=lambda w: w["warehouse_code"])
+            if loc.get("type") != "WAREHOUSE":
+                wh_map[code]["total_bins"] += 1
+                if loc.get("bay_number"):
+                    wh_map[code]["bays"].add(str(loc.get("bay_number")))
+                inv_items = self.inventory_repo.find_by_location(org_id, loc["_id"])
+                if sum(item.get("quantity", 0) for item in inv_items) > 0:
+                    wh_map[code]["occupied_bins"] += 1
 
-    def get_all_locations(self, warehouse_code: str = None, status: str = None):
-        query = {}
+        result = []
+        for code, data in wh_map.items():
+            result.append({
+                "warehouse_code": data["warehouse_code"],
+                "warehouse_name": data["warehouse_name"],
+                "total_bins": data["total_bins"],
+                "occupied_bins": data["occupied_bins"],
+                "total_bays": len(data["bays"]),
+                "bays": sorted(list(data["bays"]))
+            })
+
+        return sorted(result, key=lambda w: w["warehouse_code"])
+
+    def get_all_locations(self, org_id: str = "ORG-001", warehouse_code: str = None, status: str = None, loc_type: str = None):
+        query = {"organization_id": org_id}
         if warehouse_code:
             query["warehouse_code"] = warehouse_code
         if status:
             query["status"] = status
+        if loc_type:
+            query["type"] = loc_type.upper()
 
         locations = self.location_repo.find_all(query, sort_by=[("location_code", 1)])
-        # Annotate occupancy info
+        # Annotate occupancy
         for loc in locations:
             loc_id = loc["_id"]
-            qty_inv = self.inventory_repo.find_by_location(loc_id)
-            cell_inv = self.cell_inventory_repo.find_by_location_id(loc_id)
-            total_items = sum(item.get("quantity", 0) for item in qty_inv) + len(cell_inv)
+            items = self.inventory_repo.find_by_location(org_id, loc_id)
+            total_items = sum(item.get("quantity", 0) for item in items)
             loc["total_items"] = total_items
             loc["is_occupied"] = total_items > 0
+            loc["inventory"] = items
         return locations
 
-    def get_location_by_id(self, location_id: str):
-        loc = self.location_repo.find_by_id(location_id)
+    def get_location_tree(self, org_id: str = "ORG-001"):
+        """Builds hierarchical tree structure of locations."""
+        locations = self.get_all_locations(org_id)
+        lookup = {l["location_code"]: {**l, "children": []} for l in locations}
+        roots = []
+
+        for loc in locations:
+            code = loc["location_code"]
+            node = lookup[code]
+            parent_code = loc.get("parent_id")
+            if parent_code and parent_code in lookup:
+                lookup[parent_code]["children"].append(node)
+            else:
+                roots.append(node)
+
+        return roots
+
+    def get_location_by_id(self, location_id: str, org_id: str = "ORG-001"):
+        loc = self.location_repo.find_one({"_id": location_id, "organization_id": org_id})
         if not loc:
-            raise ValueError(f"Location {location_id} not found")
+            loc = self.location_repo.find_by_code(org_id, location_id)
+        if not loc:
+            raise ValueError(f"Location '{location_id}' not found")
         loc_id = loc["_id"]
-        loc["inventory"] = self._enrich_inventory(loc_id)
-        loc["cells"] = self.cell_inventory_repo.find_by_location_id(loc_id)
+        loc["inventory"] = self._enrich_inventory(loc_id, org_id)
+        loc["cells"] = [i for i in loc["inventory"] if i.get("serial_number")]
         return loc
 
-    def resolve_by_code(self, location_code: str):
-        loc = self.location_repo.find_by_code(location_code.strip())
+    def resolve_by_code(self, location_code: str, org_id: str = "ORG-001"):
+        loc = self.location_repo.find_by_code(org_id, location_code.strip())
         if not loc:
             raise ValueError(f"Location with code '{location_code}' not found")
-        loc_id = loc["_id"]
-        loc["inventory"] = self._enrich_inventory(loc_id)
-        loc["cells"] = self.cell_inventory_repo.find_by_location_id(loc_id)
-        return loc
+        return self.get_location_by_id(loc["_id"], org_id)
 
-    def resolve_by_nfc(self, nfc_tag_uid: str):
-        cleaned_uid = nfc_tag_uid.strip()
-        loc = self.location_repo.find_by_nfc(cleaned_uid)
+    def resolve_by_nfc(self, nfc_uid: str, org_id: str = "ORG-001"):
+        loc = self.location_repo.find_by_nfc(org_id, nfc_uid.strip())
         if not loc:
-            raise ValueError(f"No location registered with NFC UID: '{nfc_tag_uid}'")
-        loc_id = loc["_id"]
-        loc["inventory"] = self._enrich_inventory(loc_id)
-        loc["cells"] = self.cell_inventory_repo.find_by_location_id(loc_id)
-        return loc
+            raise ValueError(f"No location matched with NFC Tag '{nfc_uid}'")
+        return self.get_location_by_id(loc["_id"], org_id)
 
-    def create_location(self, data: dict):
-        wh_code = data["warehouse_code"].strip().upper()
-        bay = str(data["bay_number"]).strip()
-        row = int(data["row_number"])
-        rack = int(data["rack_number"])
-        section = str(data.get("section_code") or "").strip().upper()
+    def resolve_by_qr(self, qr_code: str, org_id: str = "ORG-001"):
+        loc = self.location_repo.find_by_qr(org_id, qr_code.strip())
+        if not loc:
+            raise ValueError(f"No location matched with QR Code '{qr_code}'")
+        return self.get_location_by_id(loc["_id"], org_id)
 
-        loc_code = data.get("location_code") or self.build_location_code(wh_code, bay, row, rack, section)
-        if self.location_repo.find_by_code(loc_code):
-            raise ValueError(f"Location code '{loc_code}' already exists")
+    def create_location(self, data: dict, org_id: str = "ORG-001"):
+        code = data["location_code"].strip().upper()
+        if self.location_repo.find_by_code(org_id, code):
+            raise ValueError(f"Location code '{code}' already exists")
 
-        nfc_uid = data.get("nfc_tag_uid") or f"inventory://location/{loc_code}"
-        if self.location_repo.find_by_nfc(nfc_uid):
-            raise ValueError(f"NFC Tag UID '{nfc_uid}' is already mapped to another location")
+        nfc_uid = data.get("nfc_uid") or data.get("nfc_tag_uid") or f"inventory://location/{code}"
+        qr_code = data.get("qr_code") or f"QR-{code}"
 
         loc_id = SequenceCounter.get_next_id("location")
-        loc_doc = {
+        now = datetime.now(timezone.utc).isoformat()
+        doc = {
             "_id": loc_id,
-            "location_code": loc_code,
-            "warehouse_code": wh_code,
-            "bay_number": bay,
-            "row_number": row,
-            "rack_number": rack,
-            "section_code": section,
+            "organization_id": org_id,
+            "location_code": code,
+            "name": data.get("name") or f"Location {code}",
+            "type": (data.get("type") or "BIN").upper(),
+            "parent_id": data.get("parent_id"),
+            "site_id": data.get("site_id", "SITE-001"),
+            "nfc_uid": nfc_uid,
             "nfc_tag_uid": nfc_uid,
-            "status": data.get("status", "ACTIVE")
+            "qr_code": qr_code,
+            "warehouse_code": data.get("warehouse_code"),
+            "bay_number": data.get("bay_number"),
+            "row_number": data.get("row_number"),
+            "rack_number": data.get("rack_number"),
+            "section_code": data.get("section_code"),
+            "status": data.get("status", "ACTIVE"),
+            "created_at": now,
+            "updated_at": now
         }
-        self.location_repo.insert_one(loc_doc)
-        return loc_doc
+        self.location_repo.insert_one(doc)
+        return doc
 
-    def bulk_generate_locations(self, data: dict):
+    def bulk_generate_locations(self, data: dict, org_id: str = "ORG-001", site_id: str = "SITE-001"):
+        effective_site = data.get("site_id") or site_id
         wh_name = data["warehouse_name"].strip()
-        wh_code = (data.get("warehouse_code") or self.generate_warehouse_code(wh_name)).upper()
+        wh_code = (data.get("warehouse_code") or wh_name[:1]).upper().strip()
         racks_count = int(data["racks_count"])
         sections = data.get("sections") or []
-        clean_sections = [str(s).strip().upper() for s in sections if str(s).strip()]
-        if not clean_sections:
-            clean_sections = [""] # Single rack without sub-sections
+        sections_to_use = [s.strip().upper() for s in sections if s.strip()] or [""]
 
-        # Support both custom bay configs and uniform bays
-        bay_configs = data.get("bay_configs")
-        if not bay_configs:
-            bays = data.get("bays") or []
-            rows_count = int(data.get("rows_count") or 1)
-            bay_configs = [{"bay": str(b).strip(), "rows_count": rows_count} for b in bays if str(b).strip()]
+        bay_rows = []
+        if data.get("bay_configs"):
+            for cfg in data["bay_configs"]:
+                bay_rows.append((str(cfg["bay"]).strip(), int(cfg["rows_count"])))
+        else:
+            bays = data.get("bays") or ["1", "2", "3"]
+            rows_cnt = int(data.get("rows_count", 2))
+            for b in bays:
+                bay_rows.append((str(b).strip(), rows_cnt))
 
-        if not bay_configs:
-            raise ValueError("At least one bay configuration must be provided")
+        # Ensure parent warehouse exists
+        wh_loc = self.location_repo.find_by_code(org_id, f"WH-{wh_code}")
+        if not wh_loc:
+            wh_loc = self.create_location({
+                "location_code": f"WH-{wh_code}",
+                "name": wh_name,
+                "type": "WAREHOUSE",
+                "warehouse_code": wh_code,
+                "status": "ACTIVE"
+            }, org_id=org_id)
 
-        total_to_generate = sum(
-            int(cfg["rows_count"]) * racks_count * len(clean_sections)
-            for cfg in bay_configs
-        )
-        if total_to_generate > 2000:
-            raise ValueError(f"Bulk generation exceeds limit of 2,000 locations per batch (attempted {total_to_generate})")
-
-        location_ids = SequenceCounter.get_next_batch_ids("location", total_to_generate)
-        id_idx = 0
-
-        created_docs = []
-        now = datetime.now(timezone.utc).isoformat()
-
-        for cfg in bay_configs:
-            bay = str(cfg["bay"]).strip()
-            rows_for_bay = int(cfg["rows_count"])
-            for row in range(1, rows_for_bay + 1):
+        docs = []
+        codes_to_create = []
+        for bay, rows_count in bay_rows:
+            for row in range(1, rows_count + 1):
                 for rack in range(1, racks_count + 1):
-                    for section in clean_sections:
-                        loc_code = self.build_location_code(wh_code, bay, row, rack, section)
-                        
-                        # Skip if already exists
-                        if self.location_repo.find_by_code(loc_code):
-                            continue
+                    for sec in sections_to_use:
+                        sec_str = sec if sec else ""
+                        loc_code = f"{wh_code}{bay}{row}-{rack}{sec_str}"
+                        codes_to_create.append((loc_code, bay, row, rack, sec_str))
 
-                        doc = {
-                            "_id": location_ids[id_idx],
-                            "location_code": loc_code,
-                            "warehouse_name": wh_name,
-                            "warehouse_code": wh_code,
-                            "bay_number": bay,
-                            "row_number": row,
-                            "rack_number": rack,
-                            "section_code": section,
-                            "nfc_tag_uid": f"inventory://location/{loc_code}",
-                            "status": "ACTIVE",
-                            "created_at": now,
-                            "updated_at": now
-                        }
-                        id_idx += 1
-                        created_docs.append(doc)
+        existing = {l["location_code"] for l in self.location_repo.find_all_by_org(org_id)}
+        new_codes = [c for c in codes_to_create if c[0] not in existing]
 
-        if created_docs:
-            self.location_repo.insert_many(created_docs)
-
+        if new_codes:
+            batch_ids = SequenceCounter.get_next_batch_ids("location", len(new_codes))
+            now = datetime.now(timezone.utc).isoformat()
+            for idx, (loc_code, bay, row, rack, sec_str) in enumerate(new_codes):
+                docs.append({
+                    "_id": batch_ids[idx],
+                    "organization_id": org_id,
+                    "location_code": loc_code,
+                    "name": f"Bin {loc_code}",
+                    "type": "BIN",
+                    "parent_id": f"WH-{wh_code}",
+                    "site_id": data.get("site_id", "SITE-001"),
+                    "warehouse_code": wh_code,
+                    "warehouse_name": wh_name,
+                    "bay_number": str(bay),
+                    "row_number": str(row),
+                    "rack_number": str(rack),
+                    "section_code": sec_str if sec_str else None,
+                    "nfc_uid": f"inventory://location/{loc_code}",
+                    "nfc_tag_uid": f"inventory://location/{loc_code}",
+                    "qr_code": f"QR-{loc_code}",
+                    "status": "ACTIVE",
+                    "created_at": now,
+                    "updated_at": now
+                })
+            self.location_repo.insert_many(docs)
 
         return {
+            "created_count": len(docs),
+            "generated_count": len(docs),
             "warehouse_code": wh_code,
-            "generated_count": len(created_docs),
-            "locations": created_docs[:100] # preview first 100
+            "warehouse_name": wh_name,
+            "locations": docs,
+            "message": f"Successfully generated {len(docs)} storage locations"
         }
 
-    def update_location(self, location_id: str, data: dict):
-        loc = self.location_repo.find_by_id(location_id)
-        if not loc:
-            raise ValueError(f"Location {location_id} not found")
-
-        update_set = {}
-        if "status" in data:
-            update_set["status"] = data["status"]
-        if "nfc_tag_uid" in data:
-            update_set["nfc_tag_uid"] = data["nfc_tag_uid"]
-
-        if update_set:
-            self.location_repo.update_one({"_id": location_id}, {"$set": update_set})
-        return self.get_location_by_id(location_id)
+    def update_location(self, location_id: str, data: dict, org_id: str = "ORG-001"):
+        loc = self.get_location_by_id(location_id, org_id)
+        update_data = {k: v for k, v in data.items() if k not in ["_id", "organization_id", "location_code", "created_at"]}
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.location_repo.update_one({"_id": loc["_id"]}, {"$set": update_data})
+        return self.get_location_by_id(loc["_id"], org_id)

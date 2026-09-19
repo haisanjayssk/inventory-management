@@ -38,3 +38,8 @@ def operator_token(client):
     })
     assert res.status_code == 200
     return res.json["data"]["token"]
+
+@pytest.fixture
+def auth_headers(admin_token):
+    return {"Authorization": f"Bearer {admin_token}"}
+

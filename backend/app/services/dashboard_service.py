@@ -1,87 +1,80 @@
 from app.config.database import Database
-from app.repositories.part_repository import PartRepository
+from app.repositories.item_repository import ItemRepository
 from app.repositories.location_repository import LocationRepository
 from app.repositories.inventory_repository import InventoryRepository
-from app.repositories.cell_repository import CellRepository
 from app.repositories.transaction_repository import TransactionRepository
-from app.services.transaction_service import TransactionService
 
 class DashboardService:
     def __init__(self):
-        self.part_repo = PartRepository()
+        self.item_repo = ItemRepository()
         self.location_repo = LocationRepository()
         self.inv_repo = InventoryRepository()
-        self.cell_repo = CellRepository()
-        self.txn_service = TransactionService()
+        self.txn_repo = TransactionRepository()
 
-    def get_metrics(self):
+    def get_metrics(self, org_id: str = "ORG-001"):
         db = Database.get_db()
         
-        # 1. Parts count
-        total_parts = self.part_repo.count()
+        # 1. Items count
+        total_parts = self.item_repo.count({"organization_id": org_id})
 
         # 2. Stock aggregations
         stock_pipeline = [
+            {"$match": {"organization_id": org_id, "status": "AVAILABLE"}},
             {
                 "$group": {
                     "_id": None,
-                    "total_quantity": {"$sum": "$quantity"},
-                    "total_available": {"$sum": "$available_quantity"},
-                    "total_reserved": {"$sum": "$reserved_quantity"}
+                    "total_quantity": {"$sum": "$quantity"}
                 }
             }
         ]
         stock_agg = list(db.inventory.aggregate(stock_pipeline))
         total_stock = stock_agg[0]["total_quantity"] if stock_agg else 0
-        total_available = stock_agg[0]["total_available"] if stock_agg else 0
-        total_reserved = stock_agg[0]["total_reserved"] if stock_agg else 0
 
         # 3. Cells metrics
-        total_cells = self.cell_repo.count()
-        cell_status_counts = {}
-        for c in db.cells.aggregate([{"$group": {"_id": "$status", "count": {"$sum": 1}}}]):
-            cell_status_counts[c["_id"]] = c["count"]
+        total_cells = db.inventory.count_documents({
+            "organization_id": org_id,
+            "serial_number": {"$ne": None},
+            "status": "AVAILABLE"
+        })
 
         # 4. Locations metrics
-        total_locations = self.location_repo.count()
-        active_locations = self.location_repo.count({"status": "ACTIVE"})
+        total_locations = self.location_repo.count({"organization_id": org_id})
+        active_locations = self.location_repo.count({"organization_id": org_id, "status": "ACTIVE"})
 
-        # Occupied locations count (locations with inventory qty > 0 or cells assigned)
-        occupied_loc_ids = set(db.inventory.distinct("location_id", {"quantity": {"$gt": 0}}))
-        occupied_loc_ids.update(db.cell_inventory.distinct("location_id"))
+        occupied_loc_ids = set(db.inventory.distinct("location_id", {"organization_id": org_id, "quantity": {"$gt": 0}, "status": "AVAILABLE"}))
         occupied_count = len(occupied_loc_ids)
         empty_count = max(0, total_locations - occupied_count)
 
-        # 5. Low stock alerts (items where available_quantity < 500)
+        # 5. Low stock alerts
         low_stock_items = []
-        low_stock_docs = self.inv_repo.find_all(
-            {"available_quantity": {"$lte": 500}, "quantity": {"$gt": 0}},
+        low_docs = db.inventory.find(
+            {"organization_id": org_id, "serial_number": None, "quantity": {"$lte": 500, "$gt": 0}},
             limit=10
         )
-        for doc in low_stock_docs:
-            part = self.part_repo.find_by_id(doc.get("part_id"))
-            if part:
+        for doc in low_docs:
+            item = self.item_repo.find_one({"_id": doc.get("item_id"), "organization_id": org_id})
+            if item:
                 low_stock_items.append({
-                    "part_code": part.get("part_code"),
-                    "part_name": part.get("part_name"),
-                    "available_quantity": doc.get("available_quantity"),
-                    "unit": part.get("unit_of_measure", "PCS")
+                    "part_code": item.get("code"),
+                    "part_name": item.get("name"),
+                    "available_quantity": doc.get("quantity"),
+                    "unit": "PCS"
                 })
 
         # 6. Recent transactions
-        recent_txns = self.txn_service.get_all_transactions(limit=10)["items"]
+        recent_txns = list(db.inventory_transactions.find({"organization_id": org_id}).sort("timestamp", -1).limit(10))
 
-        # 7. Stock movement summary (Received vs Issued)
-        receive_count = db.transactions.count_documents({"transaction_type": "RECEIVE"})
-        issue_count = db.transactions.count_documents({"transaction_type": "ISSUE"})
-        transfer_count = db.transactions.count_documents({"transaction_type": "TRANSFER"})
+        # 7. Stock movement breakdown
+        receive_count = db.inventory_transactions.count_documents({"organization_id": org_id, "transaction_type": "RECEIVE"})
+        issue_count = db.inventory_transactions.count_documents({"organization_id": org_id, "transaction_type": "ISSUE"})
+        transfer_count = db.inventory_transactions.count_documents({"organization_id": org_id, "transaction_type": "TRANSFER"})
 
         return {
             "summary": {
                 "total_parts": total_parts,
                 "total_stock_quantity": total_stock,
-                "total_available_quantity": total_available,
-                "total_reserved_quantity": total_reserved,
+                "total_available_quantity": total_stock,
+                "total_reserved_quantity": 0,
                 "total_cells": total_cells,
                 "total_locations": total_locations,
                 "active_locations": active_locations,
@@ -89,7 +82,6 @@ class DashboardService:
                 "empty_locations": empty_count,
                 "occupancy_rate": round((occupied_count / total_locations * 100) if total_locations > 0 else 0, 1)
             },
-            "cell_status_summary": cell_status_counts,
             "movement_counts": {
                 "receive": receive_count,
                 "issue": issue_count,

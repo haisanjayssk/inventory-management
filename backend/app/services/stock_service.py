@@ -1,207 +1,202 @@
 from datetime import datetime, timezone
-from pymongo import ReturnDocument
 from app.config.database import Database
 from app.models.counter import SequenceCounter
-from app.repositories.part_repository import PartRepository, LotRepository
+from app.repositories.item_repository import ItemRepository
+from app.repositories.item_type_repository import ItemTypeRepository
 from app.repositories.location_repository import LocationRepository
 from app.repositories.inventory_repository import InventoryRepository
-from app.repositories.cell_repository import CellRepository, CellInventoryRepository
 from app.repositories.transaction_repository import TransactionRepository
+from app.repositories.vendor_repository import VendorRepository
 
 class StockService:
     def __init__(self):
-        self.part_repo = PartRepository()
-        self.lot_repo = LotRepository()
+        self.item_repo = ItemRepository()
+        self.item_type_repo = ItemTypeRepository()
         self.location_repo = LocationRepository()
         self.inventory_repo = InventoryRepository()
-        self.cell_repo = CellRepository()
-        self.cell_inventory_repo = CellInventoryRepository()
         self.txn_repo = TransactionRepository()
+        self.vendor_repo = VendorRepository()
 
-    def resolve_location(self, loc_id: str = None, loc_code: str = None, nfc_uid: str = None, session=None):
-        """Resolves location by id, code, or nfc uid and checks ACTIVE status."""
+    def resolve_location(self, org_id: str, loc_id: str = None, loc_code: str = None, nfc_uid: str = None, qr_code: str = None, session=None):
         loc = None
         if loc_id:
-            loc = self.location_repo.find_by_id(loc_id, session=session)
+            loc = self.location_repo.find_one({"_id": loc_id, "organization_id": org_id}, session=session)
+            if not loc:
+                loc = self.location_repo.find_by_code(org_id, loc_id, session=session)
         elif loc_code:
-            loc = self.location_repo.find_by_code(loc_code.strip(), session=session)
+            loc = self.location_repo.find_by_code(org_id, loc_code.strip(), session=session)
         elif nfc_uid:
-            loc = self.location_repo.find_by_nfc(nfc_uid.strip(), session=session)
+            loc = self.location_repo.find_by_nfc(org_id, nfc_uid.strip(), session=session)
+        elif qr_code:
+            loc = self.location_repo.find_by_qr(org_id, qr_code.strip(), session=session)
 
         if not loc:
-            raise ValueError("Destination/Source location could not be resolved from provided ID, Code, or NFC Tag")
+            raise ValueError("Location could not be resolved from provided ID, Code, NFC, or QR Tag")
 
         if loc.get("status") != "ACTIVE":
-            raise ValueError(f"Location '{loc.get('location_code')}' is not ACTIVE (current status: {loc.get('status')})")
+            raise ValueError(f"Location '{loc.get('location_code')}' is not ACTIVE (status: {loc.get('status')})")
 
         return loc
 
-    def log_transaction(self, part_id: str, lot_id: str, cell_id: str, txn_type: str, quantity: int,
-                        from_loc_id: str, to_loc_id: str, user_id: str, ref_id: str = None,
-                        desc: str = None, session=None):
-        """Creates an immutable audit transaction record."""
+    def log_transaction(self, org_id: str, t_id: str, txn_type: str, item_id: str, quantity: float,
+                        from_loc_id: str, to_loc_id: str, performed_by: str,
+                        lot_number: str = None, serial_number: str = None, vendor_id: str = None,
+                        reference: dict = None, remarks: str = None, session=None):
         txn_id = SequenceCounter.get_next_id("transaction", session=session)
         now = datetime.now(timezone.utc).isoformat()
         txn_doc = {
             "_id": txn_id,
-            "part_id": part_id,
-            "lot_id": lot_id,
-            "cell_id": cell_id,
+            "t_id": t_id,
+            "organization_id": org_id,
             "transaction_type": txn_type,
-            "quantity": quantity,
+            "item_id": item_id,
+            "part_id": item_id,
+            "lot_number": lot_number,
+            "lot_batch_no": lot_number,
+            "serial_number": serial_number,
+            "quantity": float(quantity),
             "from_location_id": from_loc_id,
             "to_location_id": to_loc_id,
-            "user_id": user_id,
-            "reference_id": ref_id,
+            "vendor_id": vendor_id,
+            "performed_by": performed_by,
+            "reference": reference or {},
             "timestamp": now,
-            "description": desc or f"{txn_type} transaction executed"
+            "remarks": remarks or f"{txn_type} transaction"
         }
         self.txn_repo.insert_one(txn_doc, session=session)
         return txn_doc
 
-    def receive(self, data: dict, user_id: str):
-        """Atomic Receive for quantity parts and bulk serial-tracked battery cells."""
+    def receive(self, data: dict, user_id: str, org_id: str = "ORG-001"):
         def _execute(session=None):
-            part = self.part_repo.find_by_id(data["part_id"], session=session)
-            if not part:
-                raise ValueError(f"Part {data['part_id']} does not exist")
-            if not part.get("active", True):
-                raise ValueError(f"Part {part.get('part_code')} is inactive")
+            # 1. Resolve Item
+            item_identifier = data.get("item_id") or data.get("part_id")
+            item = self.item_repo.find_one({"_id": item_identifier, "organization_id": org_id}, session=session)
+            if not item:
+                item = self.item_repo.find_by_code(org_id, item_identifier, session=session)
+            if not item:
+                raise ValueError(f"Item '{item_identifier}' does not exist")
+            if not item.get("active", True):
+                raise ValueError(f"Item '{item.get('code')}' is inactive")
 
-            # Resolve or Create Lot
-            lot_id = data.get("lot_id")
-            if not lot_id and data.get("lot_batch_no"):
-                batch_no = data["lot_batch_no"].strip()
-                existing_lot = self.lot_repo.find_by_part_and_batch(part["_id"], batch_no, session=session)
-                if existing_lot:
-                    lot_id = existing_lot["_id"]
-                else:
-                    lot_id = SequenceCounter.get_next_id("lot", session=session)
-                    lot_doc = {
-                        "_id": lot_id,
-                        "part_id": part["_id"],
-                        "lot_batch_no": batch_no,
-                        "vendor_id": data.get("vendor_id") or part.get("vendor_id"),
-                        "manufacturing_date": data.get("manufacturing_date"),
-                        "received_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                        "expiry_date": data.get("expiry_date")
-                    }
-                    self.lot_repo.insert_one(lot_doc, session=session)
-            elif not lot_id:
-                raise ValueError("Either lot_id or lot_batch_no must be supplied")
+            item_type = self.item_type_repo.find_one({"_id": item["item_type_id"], "organization_id": org_id}, session=session)
+            tracking_mode = item_type.get("tracking_mode", "QUANTITY") if item_type else "QUANTITY"
 
-            lot = self.lot_repo.find_by_id(lot_id, session=session)
-            if not lot:
-                raise ValueError(f"Lot {lot_id} does not exist")
-
-            # Resolve Location
-            destination_loc = self.resolve_location(
+            # 2. Resolve Destination Location
+            dest_loc = self.resolve_location(
+                org_id=org_id,
                 loc_id=data.get("location_id"),
                 loc_code=data.get("location_code"),
-                nfc_uid=data.get("nfc_tag_uid"),
+                nfc_uid=data.get("nfc_uid") or data.get("nfc_tag_uid"),
+                qr_code=data.get("qr_code"),
                 session=session
             )
-            dest_loc_id = destination_loc["_id"]
+            dest_loc_id = dest_loc["_id"]
 
-            qty = int(data["quantity"])
+            qty = float(data["quantity"])
             if qty <= 0:
                 raise ValueError("Quantity must be greater than zero")
 
+            lot_number = (data.get("lot_number") or data.get("lot_batch_no") or "").strip() or None
+            vendor_id = data.get("vendor_id")
+            reference = data.get("reference") or {}
+            remarks = data.get("remarks") or data.get("description") or "Material receipt"
+            site_id = data.get("site_id") or item.get("site_id") or "SITE-001"
+
+            t_id = SequenceCounter.get_next_id("transaction", session=session)
             now = datetime.now(timezone.utc).isoformat()
 
-            # --- Branch by Tracking Type ---
-            if part.get("tracking_type") == "SERIAL":
-                # Battery cells bulk receive
-                cell_serials = []
-                if data.get("cell_serials"):
-                    cell_serials = [s.strip() for s in data["cell_serials"] if s.strip()]
+            # 3. Branch by Tracking Mode (SERIAL vs QUANTITY/LOT)
+            if tracking_mode == "SERIAL":
+                serials = []
+                if data.get("serial_numbers"):
+                    serials = [s.strip() for s in data["serial_numbers"] if s.strip()]
+                elif data.get("serial_number"):
+                    serials = [data["serial_number"].strip()]
                 elif data.get("serial_range_prefix") and data.get("serial_range_start") is not None and data.get("serial_range_end") is not None:
                     prefix = data["serial_range_prefix"].strip()
                     start_num = int(data["serial_range_start"])
                     end_num = int(data["serial_range_end"])
                     pad = max(6, len(str(end_num)))
-                    cell_serials = [f"{prefix}{str(i).zfill(pad)}" for i in range(start_num, end_num + 1)]
+                    serials = [f"{prefix}{str(i).zfill(pad)}" for i in range(start_num, end_num + 1)]
 
-                if len(cell_serials) != qty:
-                    raise ValueError(f"Supplied cell serials count ({len(cell_serials)}) does not match receive quantity ({qty})")
+                if len(serials) != int(qty):
+                    raise ValueError(f"Quantity is {int(qty)} but {len(serials)} serial numbers were provided/generated.")
 
-                # Verify serial uniqueness
-                existing_cells = self.cell_repo.find_all({"cell_serial_no": {"$in": cell_serials}}, session=session)
-                if existing_cells:
-                    dupes = [c["cell_serial_no"] for c in existing_cells[:5]]
-                    raise ValueError(f"Duplicate cell serial numbers found: {', '.join(dupes)}")
+                existing = self.inventory_repo.find_all({
+                    "organization_id": org_id,
+                    "serial_number": {"$in": serials},
+                    "status": "AVAILABLE"
+                }, session=session)
+                if existing:
+                    dupes = [x["serial_number"] for x in existing[:5]]
+                    raise ValueError(f"Duplicate active serials already in inventory: {', '.join(dupes)}")
 
-                # Batch generate Cell IDs
-                cell_ids = SequenceCounter.get_next_batch_ids("cell", qty, session=session)
-                cell_inv_ids = SequenceCounter.get_next_batch_ids("cell_inventory", qty, session=session)
-
-                cell_docs = []
-                cell_inv_docs = []
-
-                for idx, serial in enumerate(cell_serials):
-                    c_id = cell_ids[idx]
-                    cinv_id = cell_inv_ids[idx]
-                    
-                    cell_docs.append({
-                        "_id": c_id,
-                        "cell_serial_no": serial,
-                        "part_id": part["_id"],
-                        "lot_id": lot["_id"],
-                        "manufacturing_date": data.get("manufacturing_date") or lot.get("manufacturing_date"),
-                        "date_code": data.get("date_code", ""),
+                inv_ids = SequenceCounter.get_next_batch_ids("inventory", len(serials), session=session)
+                inv_docs = []
+                for idx, s_num in enumerate(serials):
+                    inv_docs.append({
+                        "_id": inv_ids[idx],
+                        "organization_id": org_id,
+                        "item_id": item["_id"],
+                        "part_id": item["_id"],
+                        "location_id": dest_loc_id,
+                        "lot_number": lot_number,
+                        "serial_number": s_num,
+                        "cell_id": s_num,
+                        "cell_serial_no": s_num,
+                        "quantity": 1.0,
+                        "site_id": site_id,
+                        "vendor_id": vendor_id,
                         "status": "AVAILABLE",
                         "created_at": now,
                         "updated_at": now
                     })
 
-                    cell_inv_docs.append({
-                        "_id": cinv_id,
-                        "cell_id": c_id,
-                        "location_id": dest_loc_id,
-                        "status": "AVAILABLE",
-                        "stored_at": now,
-                        "updated_at": now
-                    })
+                self.inventory_repo.insert_many(inv_docs, session=session)
 
-                self.cell_repo.insert_many(cell_docs, session=session)
-                self.cell_inventory_repo.insert_many(cell_inv_docs, session=session)
-
-                # Batch generate transactions for audit
-                txn_doc = self.log_transaction(
-                    part_id=part["_id"],
-                    lot_id=lot["_id"],
-                    cell_id=None, # Summary transaction for bulk cell receive
+                self.log_transaction(
+                    org_id=org_id,
+                    t_id=t_id,
                     txn_type="RECEIVE",
+                    item_id=item["_id"],
                     quantity=qty,
                     from_loc_id=None,
                     to_loc_id=dest_loc_id,
-                    user_id=user_id,
-                    ref_id=data.get("reference_id"),
-                    desc=f"Bulk received {qty} cells ({cell_serials[0]} - {cell_serials[-1]})",
+                    performed_by=user_id,
+                    lot_number=lot_number,
+                    serial_number=f"{serials[0]} - {serials[-1]}" if len(serials) > 1 else serials[0],
+                    vendor_id=vendor_id,
+                    reference=reference,
+                    remarks=remarks,
                     session=session
                 )
 
                 return {
                     "operation": "RECEIVE",
-                    "part_id": part["_id"],
-                    "part_code": part["part_code"],
-                    "lot_id": lot["_id"],
-                    "lot_batch_no": lot["lot_batch_no"],
+                    "t_id": t_id,
+                    "item_id": item["_id"],
+                    "part_id": item["_id"],
+                    "item_code": item["code"],
+                    "part_code": item["code"],
                     "location_id": dest_loc_id,
-                    "location_code": destination_loc["location_code"],
+                    "location_code": dest_loc["location_code"],
+                    "lot_number": lot_number,
+                    "lot_id": lot_number,
+                    "lot_batch_no": lot_number,
                     "quantity": qty,
-                    "cell_count": len(cell_docs),
-                    "first_serial": cell_serials[0],
-                    "last_serial": cell_serials[-1],
-                    "transaction_id": txn_doc["_id"]
+                    "cell_count": len(serials),
+                    "serials_count": len(serials),
+                    "first_serial": serials[0],
+                    "last_serial": serials[-1]
                 }
 
             else:
-                # Quantity parts receive
-                inv = self.inventory_repo.find_by_part_lot_location(
-                    part_id=part["_id"],
-                    lot_id=lot["_id"],
+                inv = self.inventory_repo.find_by_keys(
+                    org_id=org_id,
+                    item_id=item["_id"],
                     location_id=dest_loc_id,
+                    lot_number=lot_number,
+                    serial_number=None,
                     session=session
                 )
 
@@ -209,428 +204,494 @@ class StockService:
                     self.inventory_repo.update_one(
                         {"_id": inv["_id"]},
                         {
-                            "$inc": {"quantity": qty, "available_quantity": qty},
-                            "$set": {"status": "AVAILABLE"}
+                            "$inc": {"quantity": qty},
+                            "$set": {"status": "AVAILABLE", "updated_at": now}
                         },
                         session=session
                     )
                     inv_id = inv["_id"]
                 else:
                     inv_id = SequenceCounter.get_next_id("inventory", session=session)
-                    inv_doc = {
+                    self.inventory_repo.insert_one({
                         "_id": inv_id,
-                        "part_id": part["_id"],
-                        "lot_id": lot["_id"],
+                        "organization_id": org_id,
+                        "item_id": item["_id"],
+                        "part_id": item["_id"],
                         "location_id": dest_loc_id,
+                        "lot_number": lot_number,
+                        "serial_number": None,
                         "quantity": qty,
-                        "available_quantity": qty,
-                        "reserved_quantity": 0,
-                        "reserved_by": None,
-                        "reserved_for": None,
+                        "site_id": site_id,
+                        "vendor_id": vendor_id,
                         "status": "AVAILABLE",
                         "created_at": now,
                         "updated_at": now
-                    }
-                    self.inventory_repo.insert_one(inv_doc, session=session)
+                    }, session=session)
 
-                txn_doc = self.log_transaction(
-                    part_id=part["_id"],
-                    lot_id=lot["_id"],
-                    cell_id=None,
+                self.log_transaction(
+                    org_id=org_id,
+                    t_id=t_id,
                     txn_type="RECEIVE",
+                    item_id=item["_id"],
                     quantity=qty,
                     from_loc_id=None,
                     to_loc_id=dest_loc_id,
-                    user_id=user_id,
-                    ref_id=data.get("reference_id"),
-                    desc=data.get("description") or f"Received {qty} {part.get('unit_of_measure', 'PCS')}",
+                    performed_by=user_id,
+                    lot_number=lot_number,
+                    vendor_id=vendor_id,
+                    reference=reference,
+                    remarks=remarks,
                     session=session
                 )
 
                 return {
                     "operation": "RECEIVE",
+                    "t_id": t_id,
                     "inventory_id": inv_id,
-                    "part_id": part["_id"],
-                    "part_code": part["part_code"],
-                    "lot_id": lot["_id"],
-                    "lot_batch_no": lot["lot_batch_no"],
+                    "item_id": item["_id"],
+                    "part_id": item["_id"],
+                    "item_code": item["code"],
+                    "part_code": item["code"],
                     "location_id": dest_loc_id,
-                    "location_code": destination_loc["location_code"],
-                    "quantity": qty,
-                    "transaction_id": txn_doc["_id"]
+                    "location_code": dest_loc["location_code"],
+                    "lot_number": lot_number,
+                    "lot_id": lot_number,
+                    "lot_batch_no": lot_number,
+                    "quantity": qty
                 }
 
-        return Database.execute_transaction(_execute)
+        if Database.is_replica_set and Database.get_client():
+            with Database.get_client().start_session() as session:
+                with session.start_transaction():
+                    return _execute(session)
+        return _execute()
 
-    def issue(self, data: dict, user_id: str):
-        """Atomic Issue for quantity parts."""
+    def issue(self, data: dict, user_id: str, org_id: str = "ORG-001"):
         def _execute(session=None):
-            part = self.part_repo.find_by_id(data["part_id"], session=session)
-            if not part:
-                raise ValueError(f"Part {data['part_id']} does not exist")
+            item_identifier = data.get("item_id") or data.get("part_id")
+            item = self.item_repo.find_one({"_id": item_identifier, "organization_id": org_id}, session=session)
+            if not item:
+                item = self.item_repo.find_by_code(org_id, item_identifier, session=session)
+            if not item:
+                raise ValueError(f"Item '{item_identifier}' does not exist")
 
-            lot = self.lot_repo.find_by_id(data["lot_id"], session=session)
-            if not lot:
-                raise ValueError(f"Lot {data['lot_id']} does not exist")
-
-            source_loc = self.resolve_location(
+            src_loc = self.resolve_location(
+                org_id=org_id,
                 loc_id=data.get("location_id"),
                 loc_code=data.get("location_code"),
-                nfc_uid=data.get("nfc_tag_uid"),
+                nfc_uid=data.get("nfc_uid") or data.get("nfc_tag_uid"),
+                qr_code=data.get("qr_code"),
                 session=session
             )
-            src_loc_id = source_loc["_id"]
+            src_loc_id = src_loc["_id"]
 
-            qty = int(data["quantity"])
+            qty = float(data["quantity"])
             if qty <= 0:
-                raise ValueError("Issue quantity must be greater than zero")
+                raise ValueError("Quantity must be greater than zero")
 
-            inv = self.inventory_repo.find_by_part_lot_location(part["_id"], lot["_id"], src_loc_id, session=session)
-            if not inv:
-                raise ValueError(f"No stock record found for Part '{part['part_code']}' at Location '{source_loc['location_code']}'")
+            lot_number = (data.get("lot_number") or data.get("lot_id") or "").strip() or None
+            serial_number = (data.get("serial_number") or "").strip() or None
+            reference = data.get("reference") or {}
+            remarks = data.get("remarks") or data.get("description") or "Material issue"
 
-            if inv.get("available_quantity", 0) < qty:
-                raise ValueError(
-                    f"INSUFFICIENT_STOCK: Requested {qty} exceeds available quantity ({inv.get('available_quantity', 0)})"
+            t_id = SequenceCounter.get_next_id("transaction", session=session)
+            now = datetime.now(timezone.utc).isoformat()
+
+            if serial_number:
+                inv = self.inventory_repo.find_by_keys(
+                    org_id=org_id,
+                    item_id=item["_id"],
+                    location_id=src_loc_id,
+                    lot_number=lot_number,
+                    serial_number=serial_number,
+                    session=session
+                )
+                if not inv or inv.get("status") != "AVAILABLE":
+                    raise ValueError(f"Serial '{serial_number}' is not available at location '{src_loc['location_code']}'")
+
+                self.inventory_repo.update_one(
+                    {"_id": inv["_id"]},
+                    {"$set": {"status": "ISSUED", "quantity": 0.0, "updated_at": now}},
+                    session=session
+                )
+            else:
+                inv = self.inventory_repo.find_by_keys(
+                    org_id=org_id,
+                    item_id=item["_id"],
+                    location_id=src_loc_id,
+                    lot_number=lot_number,
+                    serial_number=None,
+                    session=session
+                )
+                if not inv or inv.get("quantity", 0) < qty:
+                    avail = inv.get("quantity", 0) if inv else 0
+                    raise ValueError(f"INSUFFICIENT_STOCK: Available stock is {avail}, Requested: {qty}")
+
+                rem_qty = inv["quantity"] - qty
+                new_status = "AVAILABLE" if rem_qty > 0 else "DEPLETED"
+                self.inventory_repo.update_one(
+                    {"_id": inv["_id"]},
+                    {"$set": {"quantity": rem_qty, "status": new_status, "updated_at": now}},
+                    session=session
                 )
 
-            new_qty = inv["quantity"] - qty
-            new_avail = inv["available_quantity"] - qty
-            new_status = "OUT_OF_STOCK" if new_qty == 0 else "AVAILABLE"
-
-            self.inventory_repo.update_one(
-                {"_id": inv["_id"]},
-                {
-                    "$inc": {"quantity": -qty, "available_quantity": -qty},
-                    "$set": {"status": new_status}
-                },
-                session=session
-            )
-
-            txn_doc = self.log_transaction(
-                part_id=part["_id"],
-                lot_id=lot["_id"],
-                cell_id=None,
+            self.log_transaction(
+                org_id=org_id,
+                t_id=t_id,
                 txn_type="ISSUE",
+                item_id=item["_id"],
                 quantity=qty,
                 from_loc_id=src_loc_id,
                 to_loc_id=None,
-                user_id=user_id,
-                ref_id=data.get("reference_id"),
-                desc=data.get("description") or f"Issued {qty} {part.get('unit_of_measure', 'PCS')}",
+                performed_by=user_id,
+                lot_number=lot_number,
+                serial_number=serial_number,
+                reference=reference,
+                remarks=remarks,
                 session=session
             )
 
             return {
                 "operation": "ISSUE",
-                "inventory_id": inv["_id"],
-                "part_code": part["part_code"],
-                "lot_batch_no": lot["lot_batch_no"],
-                "location_code": source_loc["location_code"],
-                "issued_quantity": qty,
-                "remaining_quantity": new_qty,
-                "remaining_available": new_avail,
-                "transaction_id": txn_doc["_id"]
+                "t_id": t_id,
+                "item_id": item["_id"],
+                "part_id": item["_id"],
+                "location_code": src_loc["location_code"],
+                "quantity": qty,
+                "remaining_quantity": rem_qty if not serial_number else 0
             }
 
-        return Database.execute_transaction(_execute)
+        if Database.is_replica_set and Database.get_client():
+            with Database.get_client().start_session() as session:
+                with session.start_transaction():
+                    return _execute(session)
+        return _execute()
 
-    def transfer(self, data: dict, user_id: str):
-        """Atomic Transfer for quantity parts between locations."""
+    def transfer(self, data: dict, user_id: str, org_id: str = "ORG-001"):
         def _execute(session=None):
-            part = self.part_repo.find_by_id(data["part_id"], session=session)
-            if not part:
-                raise ValueError(f"Part {data['part_id']} does not exist")
-
-            lot = self.lot_repo.find_by_id(data["lot_id"], session=session)
-            if not lot:
-                raise ValueError(f"Lot {data['lot_id']} does not exist")
+            item_identifier = data.get("item_id") or data.get("part_id")
+            item = self.item_repo.find_one({"_id": item_identifier, "organization_id": org_id}, session=session)
+            if not item:
+                item = self.item_repo.find_by_code(org_id, item_identifier, session=session)
+            if not item:
+                raise ValueError(f"Item '{item_identifier}' does not exist")
 
             src_loc = self.resolve_location(
+                org_id=org_id,
                 loc_id=data.get("from_location_id"),
                 loc_code=data.get("from_location_code"),
-                nfc_uid=data.get("from_nfc_tag_uid"),
+                nfc_uid=data.get("from_nfc_uid") or data.get("from_nfc_tag_uid"),
                 session=session
             )
             dest_loc = self.resolve_location(
+                org_id=org_id,
                 loc_id=data.get("to_location_id"),
                 loc_code=data.get("to_location_code"),
-                nfc_uid=data.get("to_nfc_tag_uid"),
+                nfc_uid=data.get("to_nfc_uid") or data.get("to_nfc_tag_uid"),
                 session=session
             )
 
             if src_loc["_id"] == dest_loc["_id"]:
-                raise ValueError("Source and destination locations cannot be identical")
+                raise ValueError("Source and destination locations must be different")
 
-            qty = int(data["quantity"])
+            qty = float(data["quantity"])
             if qty <= 0:
-                raise ValueError("Transfer quantity must be greater than zero")
+                raise ValueError("Quantity must be greater than zero")
 
-            # Check source inventory
-            src_inv = self.inventory_repo.find_by_part_lot_location(part["_id"], lot["_id"], src_loc["_id"], session=session)
-            if not src_inv:
-                raise ValueError(f"No stock found for Part '{part['part_code']}' at Source Location '{src_loc['location_code']}'")
+            lot_number = (data.get("lot_number") or data.get("lot_id") or "").strip() or None
+            serial_number = (data.get("serial_number") or "").strip() or None
+            reference = data.get("reference") or {}
+            remarks = data.get("remarks") or data.get("description") or "Material transfer"
 
-            if src_inv.get("available_quantity", 0) < qty:
-                raise ValueError(
-                    f"INSUFFICIENT_STOCK: Requested transfer {qty} exceeds available quantity ({src_inv.get('available_quantity', 0)})"
-                )
-
-            # Decrement source
-            new_src_qty = src_inv["quantity"] - qty
-            new_src_avail = src_inv["available_quantity"] - qty
-            src_status = "OUT_OF_STOCK" if new_src_qty == 0 else "AVAILABLE"
-
-            self.inventory_repo.update_one(
-                {"_id": src_inv["_id"]},
-                {
-                    "$inc": {"quantity": -qty, "available_quantity": -qty},
-                    "$set": {"status": src_status}
-                },
-                session=session
-            )
-
-            # Increment destination
-            dest_inv = self.inventory_repo.find_by_part_lot_location(part["_id"], lot["_id"], dest_loc["_id"], session=session)
+            t_id = SequenceCounter.get_next_id("transaction", session=session)
             now = datetime.now(timezone.utc).isoformat()
-            if dest_inv:
+
+            if serial_number:
+                inv = self.inventory_repo.find_by_keys(
+                    org_id=org_id,
+                    item_id=item["_id"],
+                    location_id=src_loc["_id"],
+                    lot_number=lot_number,
+                    serial_number=serial_number,
+                    session=session
+                )
+                if not inv or inv.get("status") != "AVAILABLE":
+                    raise ValueError(f"Serial '{serial_number}' is not available at origin location '{src_loc['location_code']}'")
+
                 self.inventory_repo.update_one(
-                    {"_id": dest_inv["_id"]},
-                    {
-                        "$inc": {"quantity": qty, "available_quantity": qty},
-                        "$set": {"status": "AVAILABLE"}
-                    },
+                    {"_id": inv["_id"]},
+                    {"$set": {"location_id": dest_loc["_id"], "updated_at": now}},
                     session=session
                 )
             else:
-                dest_inv_id = SequenceCounter.get_next_id("inventory", session=session)
-                self.inventory_repo.insert_one({
-                    "_id": dest_inv_id,
-                    "part_id": part["_id"],
-                    "lot_id": lot["_id"],
-                    "location_id": dest_loc["_id"],
-                    "quantity": qty,
-                    "available_quantity": qty,
-                    "reserved_quantity": 0,
-                    "reserved_by": None,
-                    "reserved_for": None,
-                    "status": "AVAILABLE",
-                    "created_at": now,
-                    "updated_at": now
-                }, session=session)
+                src_inv = self.inventory_repo.find_by_keys(
+                    org_id=org_id,
+                    item_id=item["_id"],
+                    location_id=src_loc["_id"],
+                    lot_number=lot_number,
+                    serial_number=None,
+                    session=session
+                )
+                if not src_inv or src_inv.get("quantity", 0) < qty:
+                    avail = src_inv.get("quantity", 0) if src_inv else 0
+                    raise ValueError(f"Insufficient stock at '{src_loc['location_code']}'. Available: {avail}, Transfer: {qty}")
 
-            txn_doc = self.log_transaction(
-                part_id=part["_id"],
-                lot_id=lot["_id"],
-                cell_id=None,
+                rem_qty = src_inv["quantity"] - qty
+                new_status = "AVAILABLE" if rem_qty > 0 else "DEPLETED"
+                self.inventory_repo.update_one(
+                    {"_id": src_inv["_id"]},
+                    {"$set": {"quantity": rem_qty, "status": new_status, "updated_at": now}},
+                    session=session
+                )
+
+                dest_inv = self.inventory_repo.find_by_keys(
+                    org_id=org_id,
+                    item_id=item["_id"],
+                    location_id=dest_loc["_id"],
+                    lot_number=lot_number,
+                    serial_number=None,
+                    session=session
+                )
+                if dest_inv:
+                    self.inventory_repo.update_one(
+                        {"_id": dest_inv["_id"]},
+                        {"$inc": {"quantity": qty}, "$set": {"status": "AVAILABLE", "updated_at": now}},
+                        session=session
+                    )
+                else:
+                    new_inv_id = SequenceCounter.get_next_id("inventory", session=session)
+                    self.inventory_repo.insert_one({
+                        "_id": new_inv_id,
+                        "organization_id": org_id,
+                        "item_id": item["_id"],
+                        "part_id": item["_id"],
+                        "location_id": dest_loc["_id"],
+                        "lot_number": lot_number,
+                        "serial_number": None,
+                        "quantity": qty,
+                        "site_id": src_inv.get("site_id", "SITE-001"),
+                        "vendor_id": src_inv.get("vendor_id"),
+                        "status": "AVAILABLE",
+                        "created_at": now,
+                        "updated_at": now
+                    }, session=session)
+
+            self.log_transaction(
+                org_id=org_id,
+                t_id=t_id,
                 txn_type="TRANSFER",
+                item_id=item["_id"],
                 quantity=qty,
                 from_loc_id=src_loc["_id"],
                 to_loc_id=dest_loc["_id"],
-                user_id=user_id,
-                ref_id=data.get("reference_id"),
-                desc=data.get("description") or f"Transferred {qty} from {src_loc['location_code']} to {dest_loc['location_code']}",
+                performed_by=user_id,
+                lot_number=lot_number,
+                serial_number=serial_number,
+                reference=reference,
+                remarks=remarks,
                 session=session
             )
 
             return {
                 "operation": "TRANSFER",
-                "part_code": part["part_code"],
-                "lot_batch_no": lot["lot_batch_no"],
+                "t_id": t_id,
+                "item_id": item["_id"],
+                "part_id": item["_id"],
                 "from_location": src_loc["location_code"],
+                "from_location_code": src_loc["location_code"],
                 "to_location": dest_loc["location_code"],
-                "quantity": qty,
-                "transaction_id": txn_doc["_id"]
+                "to_location_code": dest_loc["location_code"],
+                "quantity": qty
             }
 
-        return Database.execute_transaction(_execute)
+        if Database.is_replica_set and Database.get_client():
+            with Database.get_client().start_session() as session:
+                with session.start_transaction():
+                    return _execute(session)
+        return _execute()
 
-    def transfer_cell(self, data: dict, user_id: str):
-        """Atomic Transfer for an individual physical cell."""
+    def transfer_cell(self, data: dict, user_id: str, org_id: str = "ORG-001"):
+        serial = (data.get("serial_number") or data.get("cell_serial_no") or data.get("cell_id") or "").strip()
+        if not serial:
+            raise ValueError("Serial number is required for cell transfer")
+
+        inv = self.inventory_repo.find_by_serial(org_id, serial)
+        if not inv:
+            raise ValueError(f"Serial '{serial}' not found in active inventory")
+
+        transfer_payload = {
+            "item_id": inv["item_id"],
+            "from_location_id": inv["location_id"],
+            "to_location_id": data.get("to_location_id"),
+            "to_location_code": data.get("to_location_code"),
+            "to_nfc_uid": data.get("to_nfc_uid") or data.get("to_nfc_tag_uid"),
+            "quantity": 1.0,
+            "serial_number": serial,
+            "lot_number": inv.get("lot_number"),
+            "reference": data.get("reference") or {"reference_id": data.get("reference_id")},
+            "remarks": data.get("remarks") or data.get("description") or f"Transferred cell {serial}"
+        }
+        return self.transfer(transfer_payload, user_id=user_id, org_id=org_id)
+
+    def reserve(self, data: dict, user_id: str, org_id: str = "ORG-001"):
         def _execute(session=None):
-            cell = None
-            if data.get("cell_id"):
-                cell = self.cell_repo.find_by_id(data["cell_id"], session=session)
-            elif data.get("cell_serial_no"):
-                cell = self.cell_repo.find_by_serial(data["cell_serial_no"].strip(), session=session)
+            item_identifier = data.get("item_id") or data.get("part_id")
+            item = self.item_repo.find_one({"_id": item_identifier, "organization_id": org_id}, session=session)
+            if not item:
+                item = self.item_repo.find_by_code(org_id, item_identifier, session=session)
+            if not item:
+                raise ValueError(f"Item '{item_identifier}' does not exist")
 
-            if not cell:
-                raise ValueError("Cell not found with supplied ID or serial number")
+            loc_id = data.get("location_id")
+            lot_number = data.get("lot_number") or data.get("lot_id")
+            qty = float(data["quantity"])
+            reserved_for = data.get("reserved_for", "WORK_ORDER")
 
-            # Lookup current cell location
-            cell_inv = self.cell_inventory_repo.find_by_cell_id(cell["_id"], session=session)
-            if not cell_inv:
-                raise ValueError(f"Cell {cell['cell_serial_no']} has no active location in inventory")
-
-            src_loc_id = cell_inv["location_id"]
-            src_loc = self.location_repo.find_by_id(src_loc_id, session=session)
-
-            # Resolve destination location
-            dest_loc = self.resolve_location(
-                loc_id=data.get("to_location_id"),
-                loc_code=data.get("to_location_code"),
-                nfc_uid=data.get("to_nfc_tag_uid"),
-                session=session
-            )
-            dest_loc_id = dest_loc["_id"]
-
-            if src_loc_id == dest_loc_id:
-                raise ValueError(f"Cell {cell['cell_serial_no']} is already located at '{dest_loc['location_code']}'")
-
-            # Update cell inventory location
-            self.cell_inventory_repo.update_one(
-                {"_id": cell_inv["_id"]},
-                {
-                    "$set": {
-                        "location_id": dest_loc_id,
-                        "status": "AVAILABLE"
-                    }
-                },
-                session=session
-            )
-
-            # Log transaction
-            txn_doc = self.log_transaction(
-                part_id=cell["part_id"],
-                lot_id=cell["lot_id"],
-                cell_id=cell["_id"],
-                txn_type="TRANSFER",
-                quantity=1,
-                from_loc_id=src_loc_id,
-                to_loc_id=dest_loc_id,
-                user_id=user_id,
-                ref_id=data.get("reference_id"),
-                desc=data.get("description") or f"Cell {cell['cell_serial_no']} transferred",
-                session=session
-            )
-
-            return {
-                "operation": "CELL_TRANSFER",
-                "cell_id": cell["_id"],
-                "cell_serial_no": cell["cell_serial_no"],
-                "from_location": src_loc["location_code"] if src_loc else src_loc_id,
-                "to_location": dest_loc["location_code"],
-                "transaction_id": txn_doc["_id"]
-            }
-
-        return Database.execute_transaction(_execute)
-
-    def reserve(self, data: dict, user_id: str):
-        """Atomic stock reservation for work orders."""
-        def _execute(session=None):
             inv = None
             if data.get("inventory_id"):
-                inv = self.inventory_repo.find_by_id(data["inventory_id"], session=session)
-            elif data.get("part_id") and data.get("lot_id") and data.get("location_id"):
-                inv = self.inventory_repo.find_by_part_lot_location(data["part_id"], data["lot_id"], data["location_id"], session=session)
+                inv = self.inventory_repo.find_one({"_id": data["inventory_id"], "organization_id": org_id}, session=session)
+            elif loc_id and lot_number:
+                inv = self.inventory_repo.find_by_keys(org_id=org_id, item_id=item["_id"], location_id=loc_id, lot_number=lot_number, serial_number=None, session=session)
+            elif loc_id:
+                inv = self.inventory_repo.find_one({"organization_id": org_id, "item_id": item["_id"], "location_id": loc_id}, session=session)
+            elif lot_number:
+                inv = self.inventory_repo.find_one({"organization_id": org_id, "item_id": item["_id"], "lot_number": lot_number}, session=session)
 
             if not inv:
                 raise ValueError("Inventory record not found for reservation")
 
-            qty = int(data["quantity"])
-            if qty <= 0:
-                raise ValueError("Reserve quantity must be greater than zero")
+            curr_qty = inv.get("quantity", 0)
+            curr_reserved = inv.get("reserved_quantity", 0)
+            avail_qty = curr_qty - curr_reserved
 
-            if inv.get("available_quantity", 0) < qty:
-                raise ValueError(
-                    f"INSUFFICIENT_STOCK: Requested reserve {qty} exceeds available quantity ({inv.get('available_quantity', 0)})"
-                )
+            if avail_qty < qty:
+                raise ValueError(f"INSUFFICIENT_STOCK: Available to reserve: {avail_qty}, Requested: {qty}")
 
-            work_order = data["reserved_for"].strip()
+            new_reserved = curr_reserved + qty
+            now = datetime.now(timezone.utc).isoformat()
+            t_id = SequenceCounter.get_next_id("transaction", session=session)
 
             self.inventory_repo.update_one(
                 {"_id": inv["_id"]},
                 {
-                    "$inc": {"available_quantity": -qty, "reserved_quantity": qty},
                     "$set": {
+                        "reserved_quantity": new_reserved,
+                        "available_quantity": curr_qty - new_reserved,
                         "reserved_by": user_id,
-                        "reserved_for": work_order
+                        "reserved_for": reserved_for,
+                        "updated_at": now
                     }
                 },
                 session=session
             )
 
-            txn_doc = self.log_transaction(
-                part_id=inv["part_id"],
-                lot_id=inv["lot_id"],
-                cell_id=None,
+            self.log_transaction(
+                org_id=org_id,
+                t_id=t_id,
                 txn_type="RESERVE",
+                item_id=item["_id"],
                 quantity=qty,
                 from_loc_id=inv["location_id"],
-                to_loc_id=inv["location_id"],
-                user_id=user_id,
-                ref_id=work_order,
-                desc=data.get("description") or f"Stock reserved for Work Order {work_order}",
+                to_loc_id=None,
+                performed_by=user_id,
+                lot_number=lot_number,
+                reference={"reserved_for": reserved_for},
+                remarks=data.get("remarks", f"Reserved {qty} for {reserved_for}"),
                 session=session
             )
 
             return {
                 "operation": "RESERVE",
+                "t_id": t_id,
                 "inventory_id": inv["_id"],
-                "reserved_quantity": qty,
-                "reserved_for": work_order,
-                "transaction_id": txn_doc["_id"]
+                "item_id": item["_id"],
+                "part_id": item["_id"],
+                "reserved_quantity": new_reserved,
+                "quantity": qty,
+                "reserved_for": reserved_for
             }
 
-        return Database.execute_transaction(_execute)
+        if Database.is_replica_set and Database.get_client():
+            with Database.get_client().start_session() as session:
+                with session.start_transaction():
+                    return _execute(session)
+        return _execute()
 
-    def release(self, data: dict, user_id: str):
-        """Atomic stock release from reservation."""
+    def release(self, data: dict, user_id: str, org_id: str = "ORG-001"):
         def _execute(session=None):
+            item_identifier = data.get("item_id") or data.get("part_id")
+            item = self.item_repo.find_one({"_id": item_identifier, "organization_id": org_id}, session=session)
+            if not item:
+                item = self.item_repo.find_by_code(org_id, item_identifier, session=session)
+            if not item:
+                raise ValueError(f"Item '{item_identifier}' does not exist")
+
+            loc_id = data.get("location_id")
+            lot_number = data.get("lot_number") or data.get("lot_id")
+            qty = float(data["quantity"])
+
             inv = None
             if data.get("inventory_id"):
-                inv = self.inventory_repo.find_by_id(data["inventory_id"], session=session)
-            elif data.get("part_id") and data.get("lot_id") and data.get("location_id"):
-                inv = self.inventory_repo.find_by_part_lot_location(data["part_id"], data["lot_id"], data["location_id"], session=session)
+                inv = self.inventory_repo.find_one({"_id": data["inventory_id"], "organization_id": org_id}, session=session)
+            elif loc_id and lot_number:
+                inv = self.inventory_repo.find_by_keys(org_id=org_id, item_id=item["_id"], location_id=loc_id, lot_number=lot_number, serial_number=None, session=session)
+            elif loc_id:
+                inv = self.inventory_repo.find_one({"organization_id": org_id, "item_id": item["_id"], "location_id": loc_id}, session=session)
+            elif lot_number:
+                inv = self.inventory_repo.find_one({"organization_id": org_id, "item_id": item["_id"], "lot_number": lot_number}, session=session)
 
             if not inv:
                 raise ValueError("Inventory record not found for release")
 
-            qty = int(data["quantity"])
-            if qty <= 0:
-                raise ValueError("Release quantity must be greater than zero")
+            curr_qty = inv.get("quantity", 0)
+            curr_reserved = inv.get("reserved_quantity", 0)
 
-            if inv.get("reserved_quantity", 0) < qty:
-                raise ValueError(
-                    f"Cannot release {qty}: only {inv.get('reserved_quantity', 0)} is currently reserved"
-                )
+            if curr_reserved < qty:
+                raise ValueError(f"Cannot release {qty}: only {curr_reserved} currently reserved")
 
-            new_reserved = inv["reserved_quantity"] - qty
-            reserved_for = inv.get("reserved_for") if new_reserved > 0 else None
-            reserved_by = inv.get("reserved_by") if new_reserved > 0 else None
+            rem_reserved = curr_reserved - qty
+            now = datetime.now(timezone.utc).isoformat()
+            t_id = SequenceCounter.get_next_id("transaction", session=session)
 
             self.inventory_repo.update_one(
                 {"_id": inv["_id"]},
                 {
-                    "$inc": {"available_quantity": qty, "reserved_quantity": -qty},
                     "$set": {
-                        "reserved_by": reserved_by,
-                        "reserved_for": reserved_for
+                        "reserved_quantity": rem_reserved,
+                        "available_quantity": curr_qty - rem_reserved,
+                        "updated_at": now
                     }
                 },
                 session=session
             )
 
-            txn_doc = self.log_transaction(
-                part_id=inv["part_id"],
-                lot_id=inv["lot_id"],
-                cell_id=None,
+            self.log_transaction(
+                org_id=org_id,
+                t_id=t_id,
                 txn_type="RELEASE",
+                item_id=item["_id"],
                 quantity=qty,
                 from_loc_id=inv["location_id"],
-                to_loc_id=inv["location_id"],
-                user_id=user_id,
-                ref_id=data.get("reference_id"),
-                desc=data.get("description") or f"Released {qty} units back to available stock",
+                to_loc_id=None,
+                performed_by=user_id,
+                lot_number=lot_number,
+                remarks=data.get("remarks", f"Released {qty} reserved stock"),
                 session=session
             )
 
             return {
                 "operation": "RELEASE",
+                "t_id": t_id,
                 "inventory_id": inv["_id"],
+                "item_id": item["_id"],
+                "part_id": item["_id"],
                 "released_quantity": qty,
-                "remaining_reserved": new_reserved,
-                "transaction_id": txn_doc["_id"]
+                "remaining_reserved": rem_reserved
             }
 
-        return Database.execute_transaction(_execute)
+        if Database.is_replica_set and Database.get_client():
+            with Database.get_client().start_session() as session:
+                with session.start_transaction():
+                    return _execute(session)
+        return _execute()
+

@@ -49,14 +49,14 @@
 
             <div
               v-for="f in pt.fields"
-              :key="f._id"
+              :key="f._id || f.field_key || f.key"
               class="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs"
             >
               <div>
-                <span class="font-bold text-white font-mono">{{ f.field_name }}</span>
-                <span class="text-[10px] text-slate-400 font-mono ml-2">key: {{ f.field_key }}</span>
+                <span class="font-bold text-white font-mono">{{ f.field_name || f.name }}</span>
+                <span class="text-[10px] text-slate-400 font-mono ml-2">key: {{ f.field_key || f.key }}</span>
                 <div class="flex items-center gap-1.5 mt-0.5">
-                  <span class="px-1.5 py-0.2 rounded bg-slate-800 text-[10px] font-mono text-emerald-400">{{ f.data_type }}</span>
+                  <span class="px-1.5 py-0.2 rounded bg-slate-800 text-[10px] font-mono text-emerald-400">{{ f.data_type || f.type || 'STRING' }}</span>
                   <span v-if="f.unit" class="text-[10px] text-slate-400">Unit: {{ f.unit }}</span>
                   <span v-if="f.required" class="text-[10px] text-rose-400 font-bold uppercase tracking-wider">Required</span>
                 </div>

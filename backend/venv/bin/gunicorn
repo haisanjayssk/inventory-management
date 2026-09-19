@@ -1,5 +1,5 @@
 #!/bin/sh
-'''exec' "/Users/emslab/Documents/MES/code/inventory management/backend/venv/bin/python3" "$0" "$@"
+'''exec' "/Users/emslab/Documents/MES/code/inventory-management/backend/venv/bin/python3" "$0" "$@"
 ' '''
 # -*- coding: utf-8 -*-
 import re

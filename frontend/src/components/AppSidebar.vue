@@ -57,8 +57,8 @@
 <script setup>
 import { computed } from 'vue'
 import {
-  LayoutDashboard, ArrowLeftRight, Boxes, BatteryCharging,
-  Layers, Sliders, MapPin, Building2, History, BarChart3, Users, X, Cpu
+  LayoutDashboard, ClipboardList, ArrowLeftRight, Boxes, BatteryCharging,
+  Layers, Sliders, MapPin, Building2, History, BarChart3, Users, X, Cpu, FolderKanban
 } from 'lucide-vue-next'
 
 defineProps({
@@ -69,6 +69,8 @@ defineEmits(['close'])
 
 const navItems = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
+  { label: 'Projects & Orders', path: '/projects', icon: FolderKanban },
+  { label: 'Indents & Returns', path: '/indents', icon: ClipboardList, badge: 'NEW' },
   { label: 'Stock Operations', path: '/stock-operations', icon: ArrowLeftRight, badge: 'CORE' },
   { label: 'Inventory', path: '/inventory', icon: Boxes },
   { label: 'Battery Cells (MES)', path: '/cells', icon: BatteryCharging },

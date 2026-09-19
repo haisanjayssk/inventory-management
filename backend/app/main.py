@@ -8,6 +8,10 @@ from app.utils.seeder import seed_database
 
 # Routers
 from app.routers.auth import auth_bp
+from app.routers.organizations import organizations_bp
+from app.routers.projects import projects_bp
+from app.routers.item_types import item_types_bp
+from app.routers.items import items_bp
 from app.routers.part_types import part_types_bp
 from app.routers.vendors import vendors_bp
 from app.routers.parts import parts_bp
@@ -19,6 +23,9 @@ from app.routers.stock import stock_bp
 from app.routers.transactions import transactions_bp
 from app.routers.dashboard import dashboard_bp
 from app.routers.reports import reports_bp
+from app.routers.indents import indents_bp
+from app.routers.indent_returns import indent_returns_bp
+from app.routers.users import users_bp
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -40,8 +47,13 @@ def create_app(config_class=Config):
     except Exception as e:
         logger.warning(f"Seeder note: {e}")
 
-    # Register Blueprints
+    # Register Blueprints - Core 9-Entity Schema & Legacy Routers
     app.register_blueprint(auth_bp)
+    app.register_blueprint(users_bp)
+    app.register_blueprint(organizations_bp)
+    app.register_blueprint(projects_bp)
+    app.register_blueprint(item_types_bp)
+    app.register_blueprint(items_bp)
     app.register_blueprint(part_types_bp)
     app.register_blueprint(vendors_bp)
     app.register_blueprint(parts_bp)
@@ -53,6 +65,8 @@ def create_app(config_class=Config):
     app.register_blueprint(transactions_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(reports_bp)
+    app.register_blueprint(indents_bp)
+    app.register_blueprint(indent_returns_bp)
 
     @app.route("/api/health", methods=["GET"])
     def health_check():
@@ -72,3 +86,12 @@ def create_app(config_class=Config):
         return error_response("INTERNAL_SERVER_ERROR", "An unexpected server error occurred", 500)
 
     return app
+
+if __name__ == "__main__":
+    app = create_app()
+    app.run(
+        host=Config.HOST,
+        port=Config.PORT,
+        debug=Config.DEBUG
+    )
+

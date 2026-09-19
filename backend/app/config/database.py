@@ -27,12 +27,40 @@ class Database:
                 cls.is_replica_set = False
                 logger.info("MongoDB connected in STANDALONE mode (replica set not enabled).")
 
+            cls.cleanup_legacy_collections()
             cls.create_indexes()
             logger.info(f"Connected to MongoDB database: {db_name}")
             return cls.db
         except ServerSelectionTimeoutError as e:
             logger.error(f"Failed to connect to MongoDB at {uri}: {e}")
             raise e
+
+    @classmethod
+    def cleanup_legacy_collections(cls):
+        """Automatically removes legacy/deprecated collections on startup."""
+        if cls.db is None:
+            return
+
+        legacy_collections = [
+            "parts",
+            "part_types",
+            "part_type_fields",
+            "lots",
+            "cells",
+            "cell_inventory",
+            "transactions",
+            "counters"
+        ]
+
+        try:
+            existing = set(cls.db.list_collection_names())
+            for coll_name in legacy_collections:
+                if coll_name in existing:
+                    cls.db[coll_name].drop()
+                    logger.info(f"Cleaned up legacy MongoDB collection: '{coll_name}'")
+        except Exception as e:
+            logger.warning(f"Note on legacy collection cleanup: {e}")
+
 
     @classmethod
     def get_db(cls):
@@ -44,84 +72,80 @@ class Database:
 
     @classmethod
     def create_indexes(cls):
-        """Creates required unique and query performance indexes according to Specification Section 21."""
+        """Creates required unique and query performance indexes for core collections."""
         if cls.db is None:
             return
 
         try:
-            # 1. part_types
-            cls.db.part_types.create_index([("part_type_name", ASCENDING)], unique=True)
+            # 1. organizations
+            cls.db.organizations.create_index([("code", ASCENDING)], unique=True, sparse=True)
+            cls.db.organizations.create_index([("status", ASCENDING)])
 
-            # 2. part_type_fields
-            cls.db.part_type_fields.create_index([("part_type_id", ASCENDING), ("field_key", ASCENDING)], unique=True)
-            cls.db.part_type_fields.create_index([("part_type_id", ASCENDING)])
+            # 2. users
+            cls.db.users.create_index([("organization_id", ASCENDING), ("username", ASCENDING)], unique=True, sparse=True)
+            cls.db.users.create_index([("organization_id", ASCENDING), ("email", ASCENDING)], unique=True, sparse=True)
+            cls.db.users.create_index([("username", ASCENDING)], sparse=True)
+            cls.db.users.create_index([("email", ASCENDING)], sparse=True)
 
-            # 3. vendors
-            cls.db.vendors.create_index([("vendor_name", ASCENDING)], unique=True)
+            # 3. projects
+            cls.db.projects.create_index([("organization_id", ASCENDING), ("project_id", ASCENDING)], unique=True, sparse=True)
+            cls.db.projects.create_index([("project_id", ASCENDING)], sparse=True)
 
-            # 4. parts
-            cls.db.parts.create_index([("part_code", ASCENDING)], unique=True)
-            cls.db.parts.create_index([("mpn", ASCENDING)])
-            cls.db.parts.create_index([("part_type_id", ASCENDING)])
-            cls.db.parts.create_index([("vendor_id", ASCENDING)])
-            cls.db.parts.create_index([("part_name", TEXT), ("description", TEXT), ("part_code", TEXT)])
+            # 4. item_types
+            cls.db.item_types.create_index([("organization_id", ASCENDING), ("code", ASCENDING)], unique=True, sparse=True)
+            cls.db.item_types.create_index([("organization_id", ASCENDING), ("name", ASCENDING)], sparse=True)
 
-            # 5. lots
-            cls.db.lots.create_index([("part_id", ASCENDING), ("lot_batch_no", ASCENDING)], unique=True)
-            cls.db.lots.create_index([("lot_batch_no", ASCENDING)])
-            cls.db.lots.create_index([("part_id", ASCENDING)])
-            cls.db.lots.create_index([("vendor_id", ASCENDING)])
+            # 5. items
+            cls.db.items.create_index([("organization_id", ASCENDING), ("code", ASCENDING)], unique=True, sparse=True)
+            cls.db.items.create_index([("organization_id", ASCENDING), ("item_type_id", ASCENDING)], sparse=True)
+            cls.db.items.create_index([("name", TEXT), ("description", TEXT), ("code", TEXT)])
 
-            # 6. cells
-            cls.db.cells.create_index([("cell_serial_no", ASCENDING)], unique=True)
-            cls.db.cells.create_index([("part_id", ASCENDING)])
-            cls.db.cells.create_index([("lot_id", ASCENDING)])
-            cls.db.cells.create_index([("status", ASCENDING)])
+            # 6. vendors
+            cls.db.vendors.create_index([("organization_id", ASCENDING), ("code", ASCENDING)], sparse=True)
+            cls.db.vendors.create_index([("organization_id", ASCENDING), ("name", ASCENDING)], sparse=True)
 
             # 7. locations
-            cls.db.locations.create_index([("location_code", ASCENDING)], unique=True)
-            cls.db.locations.create_index([("nfc_tag_uid", ASCENDING)], unique=True)
-            cls.db.locations.create_index([("warehouse_code", ASCENDING)])
+            cls.db.locations.create_index([("organization_id", ASCENDING), ("location_code", ASCENDING)], unique=True, sparse=True)
+            cls.db.locations.create_index([("organization_id", ASCENDING), ("parent_id", ASCENDING)], sparse=True)
+            cls.db.locations.create_index([("nfc_uid", ASCENDING)], sparse=True)
+            cls.db.locations.create_index([("qr_code", ASCENDING)], sparse=True)
+            cls.db.locations.create_index([("location_code", ASCENDING)], sparse=True)
             cls.db.locations.create_index([("status", ASCENDING)])
 
             # 8. inventory
-            cls.db.inventory.create_index([("part_id", ASCENDING), ("lot_id", ASCENDING), ("location_id", ASCENDING)], unique=True)
-            cls.db.inventory.create_index([("part_id", ASCENDING)])
-            cls.db.inventory.create_index([("lot_id", ASCENDING)])
+            cls.db.inventory.create_index([
+                ("organization_id", ASCENDING),
+                ("item_id", ASCENDING),
+                ("location_id", ASCENDING),
+                ("lot_number", ASCENDING),
+                ("serial_number", ASCENDING)
+            ], sparse=True)
+            cls.db.inventory.create_index([("serial_number", ASCENDING)], sparse=True)
             cls.db.inventory.create_index([("location_id", ASCENDING)])
+            cls.db.inventory.create_index([("item_id", ASCENDING)])
             cls.db.inventory.create_index([("status", ASCENDING)])
 
-            # 9. cell_inventory
-            cls.db.cell_inventory.create_index([("cell_id", ASCENDING)], unique=True)
-            cls.db.cell_inventory.create_index([("location_id", ASCENDING)])
-            cls.db.cell_inventory.create_index([("status", ASCENDING)])
+            # 9. inventory_transactions
+            cls.db.inventory_transactions.create_index([("organization_id", ASCENDING), ("t_id", ASCENDING)], sparse=True)
+            cls.db.inventory_transactions.create_index([("item_id", ASCENDING)])
+            cls.db.inventory_transactions.create_index([("serial_number", ASCENDING)], sparse=True)
+            cls.db.inventory_transactions.create_index([("timestamp", DESCENDING)])
+            cls.db.inventory_transactions.create_index([("performed_by", ASCENDING)])
 
-            # 10. transactions
-            cls.db.transactions.create_index([("part_id", ASCENDING)])
-            cls.db.transactions.create_index([("lot_id", ASCENDING)])
-            cls.db.transactions.create_index([("cell_id", ASCENDING)])
-            cls.db.transactions.create_index([("from_location_id", ASCENDING)])
-            cls.db.transactions.create_index([("to_location_id", ASCENDING)])
-            cls.db.transactions.create_index([("timestamp", DESCENDING)])
-            cls.db.transactions.create_index([("transaction_type", ASCENDING)])
+            # 10. indents
+            cls.db.indents.create_index([("organization_id", ASCENDING), ("indent_number", ASCENDING)], unique=True, sparse=True)
+            cls.db.indents.create_index([("organization_id", ASCENDING), ("project_id", ASCENDING)], sparse=True)
+            cls.db.indents.create_index([("organization_id", ASCENDING), ("status", ASCENDING)])
+            cls.db.indents.create_index([("organization_id", ASCENDING), ("requester_id", ASCENDING)], sparse=True)
+            cls.db.indents.create_index([("organization_id", ASCENDING), ("project_head_id", ASCENDING)], sparse=True)
+            cls.db.indents.create_index([("created_at", DESCENDING)])
 
-            # 11. users
-            cls.db.users.create_index([("email", ASCENDING)], unique=True)
-            cls.db.users.create_index([("username", ASCENDING)], unique=True)
+            # 11. indent_returns
+            cls.db.indent_returns.create_index([("organization_id", ASCENDING), ("return_number", ASCENDING)], unique=True, sparse=True)
+            cls.db.indent_returns.create_index([("organization_id", ASCENDING), ("indent_id", ASCENDING)], sparse=True)
+            cls.db.indent_returns.create_index([("organization_id", ASCENDING), ("status", ASCENDING)])
+            cls.db.indent_returns.create_index([("created_at", DESCENDING)])
 
-            logger.info("All MongoDB collection indexes verified and created successfully.")
-        except Exception as e:
-            logger.error(f"Error creating indexes: {e}")
-
-    @classmethod
-    def execute_transaction(cls, callback):
-        """
-        Executes a callable inside a MongoDB multi-document transaction if replica set is available,
-        or calls it directly if running in standalone mode.
-        """
-        if cls.is_replica_set and cls.client:
-            with cls.client.start_session() as session:
-                with session.start_transaction():
-                    return callback(session=session)
-        else:
-            return callback(session=None)
+            logger.info("Core collection indexes ensured successfully.")
+        except PyMongoError as e:
+            logger.warning(f"Note on index creation: {e}")

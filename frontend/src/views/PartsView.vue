@@ -196,27 +196,27 @@
           </h4>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div v-for="field in selectedTypeFields" :key="field._id">
+            <div v-for="field in selectedTypeFields" :key="field._id || field.field_key || field.key">
               <label class="block text-[11px] font-semibold text-slate-300 mb-1">
-                {{ field.field_name }} <span v-if="field.unit" class="text-slate-400">({{ field.unit }})</span>
+                {{ field.field_name || field.name || field.field_key || field.key }} <span v-if="field.unit" class="text-slate-400">({{ field.unit }})</span>
                 <span v-if="field.required" class="text-rose-400">*</span>
               </label>
 
               <!-- Select Option -->
               <select
-                v-if="field.data_type === 'SELECT'"
-                v-model="newPartForm.attributes[field.field_key]"
+                v-if="(field.data_type || field.type) === 'SELECT'"
+                v-model="newPartForm.attributes[field.field_key || field.key]"
                 :required="field.required"
                 class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
               >
                 <option value="" disabled>Select option</option>
-                <option v-for="opt in field.options" :key="opt" :value="opt">{{ opt }}</option>
+                <option v-for="opt in (field.options || [])" :key="opt" :value="opt">{{ opt }}</option>
               </select>
 
               <!-- Number / Decimal -->
               <input
-                v-else-if="field.data_type === 'NUMBER' || field.data_type === 'DECIMAL'"
-                v-model.number="newPartForm.attributes[field.field_key]"
+                v-else-if="['NUMBER', 'DECIMAL', 'INTEGER'].includes((field.data_type || field.type || '').toUpperCase())"
+                v-model.number="newPartForm.attributes[field.field_key || field.key]"
                 type="number"
                 step="any"
                 :required="field.required"
@@ -226,7 +226,7 @@
               <!-- Text / Default -->
               <input
                 v-else
-                v-model="newPartForm.attributes[field.field_key]"
+                v-model="newPartForm.attributes[field.field_key || field.key]"
                 type="text"
                 :required="field.required"
                 class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"

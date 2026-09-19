@@ -30,29 +30,52 @@ class PartService:
 
     # --- Part Types ---
     def get_all_part_types(self):
-        part_types = self.part_type_repo.find_all(sort_by=[("part_type_name", 1)])
+        part_types = self.part_type_repo.find_all(sort_by=[("code", 1)])
         for pt in part_types:
-            pt["fields"] = self.field_repo.find_by_part_type(pt["_id"])
+            pt_name = pt.get("part_type_name") or pt.get("name") or pt.get("code")
+            pt["part_type_name"] = pt.get("code") or pt_name
+            pt["name"] = pt.get("name") or pt_name
+            pt["code"] = pt.get("code") or pt_name
+            fields = pt.get("fields") or self.field_repo.find_by_part_type(pt["_id"])
+            pt["fields"] = fields
         return part_types
 
     def get_part_type_by_id(self, part_type_id: str):
         pt = self.part_type_repo.find_by_id(part_type_id)
         if not pt:
+            pt = self.part_type_repo.find_one({"code": part_type_id.strip().upper()})
+        if not pt:
+            pt = self.part_type_repo.find_one({"part_type_name": part_type_id.strip().upper()})
+        if not pt:
             raise ValueError(f"Part type {part_type_id} not found")
-        pt["fields"] = self.field_repo.find_by_part_type(part_type_id)
+        pt["part_type_name"] = pt.get("code") or pt.get("name") or pt.get("part_type_name")
+        pt["name"] = pt.get("name") or pt["part_type_name"]
+        pt["fields"] = pt.get("fields") or self.field_repo.find_by_part_type(part_type_id)
         return pt
 
     def create_part_type(self, data: dict, created_by: str = "admin"):
-        name_upper = data["part_type_name"].strip().upper()
-        existing = self.part_type_repo.find_one({"part_type_name": name_upper})
+        name_upper = (data.get("part_type_name") or data.get("name") or data.get("code", "")).strip().upper()
+        existing = self.part_type_repo.find_one({
+            "$or": [
+                {"part_type_name": name_upper},
+                {"code": name_upper},
+                {"name": name_upper}
+            ]
+        })
         if existing:
             raise ValueError(f"Part type '{name_upper}' already exists")
 
         pt_id = SequenceCounter.get_next_id("part_type")
         pt_doc = {
             "_id": pt_id,
+            "organization_id": "ORG-001",
+            "code": name_upper,
+            "name": data.get("name", name_upper),
             "part_type_name": name_upper,
             "description": data.get("description", ""),
+            "tracking_mode": data.get("tracking_mode", "QUANTITY"),
+            "tracking_type": data.get("tracking_mode", "QUANTITY"),
+            "fields": data.get("fields", []),
             "created_by": created_by
         }
         self.part_type_repo.insert_one(pt_doc)
@@ -63,43 +86,46 @@ class PartService:
                 field_doc = self.add_field_to_part_type(pt_id, field)
                 fields_list.append(field_doc)
 
-        pt_doc["fields"] = fields_list
+        pt_doc["fields"] = fields_list or data.get("fields", [])
         return pt_doc
 
     def update_part_type(self, part_type_id: str, data: dict):
-        pt = self.part_type_repo.find_by_id(part_type_id)
-        if not pt:
-            raise ValueError(f"Part type {part_type_id} not found")
-
+        pt = self.get_part_type_by_id(part_type_id)
         update_set = {}
         if "description" in data:
             update_set["description"] = data["description"]
         if "part_type_name" in data:
-            update_set["part_type_name"] = data["part_type_name"].strip().upper()
+            name_upper = data["part_type_name"].strip().upper()
+            update_set["part_type_name"] = name_upper
+            update_set["code"] = name_upper
+            update_set["name"] = data["part_type_name"].strip()
 
         if update_set:
-            self.part_type_repo.update_one({"_id": part_type_id}, {"$set": update_set})
+            self.part_type_repo.update_one({"_id": pt["_id"]}, {"$set": update_set})
 
-        return self.get_part_type_by_id(part_type_id)
+        return self.get_part_type_by_id(pt["_id"])
 
     # --- Part Type Fields (Dynamic Attributes) ---
     def add_field_to_part_type(self, part_type_id: str, field_data: dict):
-        key = field_data["field_key"].strip().lower().replace(" ", "_")
-        existing = self.field_repo.find_one({"part_type_id": part_type_id, "field_key": key})
+        key = (field_data.get("field_key") or field_data.get("key") or field_data.get("field_name") or field_data.get("name", "")).strip().lower().replace(" ", "_")
+        existing = self.field_repo.find_one({"part_type_id": part_type_id, "$or": [{"field_key": key}, {"key": key}]})
         if existing:
             raise ValueError(f"Field key '{key}' already exists for this part type")
 
         field_id = SequenceCounter.get_next_id("part_type_field")
+        f_name = (field_data.get("field_name") or field_data.get("name") or key).strip()
         doc = {
             "_id": field_id,
             "part_type_id": part_type_id,
-            "field_name": field_data["field_name"].strip(),
+            "field_name": f_name,
             "field_key": key,
-            "data_type": field_data.get("data_type", "STRING").upper(),
+            "name": f_name,
+            "key": key,
+            "data_type": (field_data.get("data_type") or field_data.get("type") or "STRING").upper(),
             "unit": field_data.get("unit"),
             "options": field_data.get("options", []),
-            "required": bool(field_data.get("required", False)),
-            "active": True
+            "required": field_data.get("required", False),
+            "active": field_data.get("active", True)
         }
         self.field_repo.insert_one(doc)
         return doc
@@ -109,23 +135,33 @@ class PartService:
 
     # --- Vendors ---
     def get_all_vendors(self):
-        return self.vendor_repo.find_all(sort_by=[("vendor_name", 1)])
+        vendors = self.vendor_repo.find_all(sort_by=[("name", 1)])
+        for v in vendors:
+            v["vendor_name"] = v.get("name") or v.get("vendor_name")
+        return vendors
 
     def get_vendor_by_id(self, vendor_id: str):
         v = self.vendor_repo.find_by_id(vendor_id)
         if not v:
             raise ValueError(f"Vendor {vendor_id} not found")
+        v["vendor_name"] = v.get("name") or v.get("vendor_name")
         return v
 
     def create_vendor(self, data: dict):
-        existing = self.vendor_repo.find_one({"vendor_name": data["vendor_name"].strip()})
+        v_name = (data.get("vendor_name") or data.get("name", "")).strip()
+        existing = self.vendor_repo.find_one({
+            "$or": [{"name": v_name}, {"vendor_name": v_name}]
+        })
         if existing:
-            raise ValueError(f"Vendor '{data['vendor_name']}' already exists")
+            raise ValueError(f"Vendor '{v_name}' already exists")
 
         vendor_id = SequenceCounter.get_next_id("vendor")
         doc = {
             "_id": vendor_id,
-            "vendor_name": data["vendor_name"].strip(),
+            "organization_id": "ORG-001",
+            "code": vendor_id,
+            "name": v_name,
+            "vendor_name": v_name,
             "contact": data.get("contact", ""),
             "email": data.get("email"),
             "address": data.get("address", ""),
@@ -136,83 +172,117 @@ class PartService:
         return doc
 
     def update_vendor(self, vendor_id: str, data: dict):
-        v = self.vendor_repo.find_by_id(vendor_id)
-        if not v:
-            raise ValueError(f"Vendor {vendor_id} not found")
-        self.vendor_repo.update_one({"_id": vendor_id}, {"$set": data})
-        return self.get_vendor_by_id(vendor_id)
+        v = self.get_vendor_by_id(vendor_id)
+        update_data = {k: v for k, v in data.items() if k not in ["_id", "created_at"]}
+        if "vendor_name" in update_data:
+            update_data["name"] = update_data["vendor_name"]
+        self.vendor_repo.update_one({"_id": v["_id"]}, {"$set": update_data})
+        return self.get_vendor_by_id(v["_id"])
 
     # --- Parts ---
     def get_all_parts(self, search: str = None, part_type_id: str = None, vendor_id: str = None, tracking_type: str = None):
         query = {}
         if part_type_id:
-            query["part_type_id"] = part_type_id
+            query["$or"] = [{"item_type_id": part_type_id}, {"part_type_id": part_type_id}]
         if vendor_id:
             query["vendor_id"] = vendor_id
         if tracking_type:
-            query["tracking_type"] = tracking_type
+            query["$or"] = [{"tracking_mode": tracking_type}, {"tracking_type": tracking_type}]
         if search:
             query["$or"] = [
+                {"code": {"$regex": search, "$options": "i"}},
                 {"part_code": {"$regex": search, "$options": "i"}},
+                {"name": {"$regex": search, "$options": "i"}},
                 {"part_name": {"$regex": search, "$options": "i"}},
                 {"mpn": {"$regex": search, "$options": "i"}},
                 {"mfr": {"$regex": search, "$options": "i"}}
             ]
 
-        parts = self.part_repo.find_all(query, sort_by=[("part_code", 1)])
-        # Populate vendor name and part type name
+        parts = self.part_repo.find_all(query, sort_by=[("code", 1)])
         for p in parts:
+            p["part_code"] = p.get("code") or p.get("part_code")
+            p["code"] = p.get("code") or p.get("part_code")
+            p["part_name"] = p.get("name") or p.get("part_name")
+            p["name"] = p.get("name") or p.get("part_name")
+            p["part_id"] = p.get("_id")
+            p["item_id"] = p.get("_id")
+            p["part_type_id"] = p.get("item_type_id") or p.get("part_type_id")
+            p["item_type_id"] = p.get("item_type_id") or p.get("part_type_id")
+            p["tracking_type"] = p.get("tracking_mode") or p.get("tracking_type", "QUANTITY")
+            p["tracking_mode"] = p.get("tracking_mode") or p.get("tracking_type", "QUANTITY")
             if p.get("vendor_id"):
                 v = self.vendor_repo.find_by_id(p["vendor_id"])
-                p["vendor_name"] = v["vendor_name"] if v else None
+                p["vendor_name"] = (v.get("name") or v.get("vendor_name")) if v else None
             if p.get("part_type_id"):
                 pt = self.part_type_repo.find_by_id(p["part_type_id"])
-                p["part_type_name"] = pt["part_type_name"] if pt else None
+                p["part_type_name"] = (pt.get("code") or pt.get("name") or pt.get("part_type_name")) if pt else None
         return parts
 
     def get_part_by_id(self, part_id: str):
         p = self.part_repo.find_by_id(part_id)
         if not p:
+            p = self.part_repo.find_by_code(part_id)
+        if not p:
             raise ValueError(f"Part {part_id} not found")
+        p["part_code"] = p.get("code") or p.get("part_code")
+        p["code"] = p.get("code") or p.get("part_code")
+        p["part_name"] = p.get("name") or p.get("part_name")
+        p["name"] = p.get("name") or p.get("part_name")
+        p["part_id"] = p.get("_id")
+        p["item_id"] = p.get("_id")
+        p["part_type_id"] = p.get("item_type_id") or p.get("part_type_id")
+        p["item_type_id"] = p.get("item_type_id") or p.get("part_type_id")
+        p["tracking_type"] = p.get("tracking_mode") or p.get("tracking_type", "QUANTITY")
+        p["tracking_mode"] = p.get("tracking_mode") or p.get("tracking_type", "QUANTITY")
         if p.get("vendor_id"):
             v = self.vendor_repo.find_by_id(p["vendor_id"])
-            p["vendor_name"] = v["vendor_name"] if v else None
+            p["vendor_name"] = (v.get("name") or v.get("vendor_name")) if v else None
         if p.get("part_type_id"):
             pt = self.part_type_repo.find_by_id(p["part_type_id"])
-            p["part_type_name"] = pt["part_type_name"] if pt else None
-            p["configured_fields"] = self.field_repo.find_by_part_type(p["part_type_id"])
+            p["part_type_name"] = (pt.get("code") or pt.get("name") or pt.get("part_type_name")) if pt else None
+            p["configured_fields"] = pt.get("fields") or self.field_repo.find_by_part_type(p["part_type_id"])
         return p
 
     def create_part(self, data: dict):
-        # Validate part code uniqueness
-        part_code = data["part_code"].strip()
+        part_code = (data.get("part_code") or data.get("code", "")).strip()
         if self.part_repo.find_by_code(part_code):
             raise ValueError(f"Part code '{part_code}' already exists")
 
-        # Validate Part Type
-        pt = self.part_type_repo.find_by_id(data["part_type_id"])
+        type_id = data.get("part_type_id") or data.get("item_type_id")
+        pt = self.part_type_repo.find_by_id(type_id)
         if not pt:
-            raise ValueError(f"Part type '{data['part_type_id']}' does not exist")
+            pt = self.part_type_repo.find_one({"code": str(type_id).strip().upper()})
+        if not pt:
+            raise ValueError(f"Part type '{type_id}' does not exist")
 
-        # Validate Vendor if provided
+        type_id = pt["_id"]
+
         if data.get("vendor_id"):
             v = self.vendor_repo.find_by_id(data["vendor_id"])
             if not v:
                 raise ValueError(f"Vendor '{data['vendor_id']}' does not exist")
 
-        # Validate required dynamic fields
-        configured_fields = self.field_repo.find_by_part_type(data["part_type_id"])
+        configured_fields = pt.get("fields") or self.field_repo.find_by_part_type(type_id) or []
         attributes = data.get("attributes", {}) or {}
         for f in configured_fields:
-            if f.get("required") and f["field_key"] not in attributes:
-                raise ValueError(f"Attribute '{f['field_name']}' ({f['field_key']}) is required for part type '{pt['part_type_name']}'")
+            f_key = f.get("field_key") or f.get("key") or (f.get("field_name") or f.get("name", "")).strip().lower().replace(" ", "_")
+            f_name = f.get("field_name") or f.get("name") or f_key
+            if f.get("required") and f_key and (f_key not in attributes or attributes[f_key] is None or str(attributes[f_key]).strip() == ""):
+                raise ValueError(f"Attribute '{f_name}' ({f_key}) is required for part type '{pt.get('part_type_name') or pt.get('name') or pt.get('code')}'")
 
         part_id = SequenceCounter.get_next_id("part")
+        part_name = (data.get("part_name") or data.get("name", "")).strip()
+        tracking = data.get("tracking_type") or data.get("tracking_mode") or pt.get("tracking_mode", "QUANTITY")
+
         part_doc = {
             "_id": part_id,
-            "part_type_id": data["part_type_id"],
+            "organization_id": "ORG-001",
+            "item_type_id": type_id,
+            "part_type_id": type_id,
+            "code": part_code,
             "part_code": part_code,
-            "part_name": data["part_name"].strip(),
+            "name": part_name,
+            "part_name": part_name,
             "package": data.get("package", ""),
             "vendor_id": data.get("vendor_id"),
             "description": data.get("description", ""),
@@ -222,7 +292,8 @@ class PartService:
             "static_sensitive": data.get("static_sensitive", "NO"),
             "msl": data.get("msl", "NA"),
             "unit_of_measure": data.get("unit_of_measure", "PCS"),
-            "tracking_type": data.get("tracking_type", "QUANTITY"),
+            "tracking_mode": tracking,
+            "tracking_type": tracking,
             "attributes": attributes,
             "active": data.get("active", True)
         }
@@ -244,55 +315,117 @@ class PartService:
         return self.part_repo.update_one({"_id": part_id}, {"$set": {"active": False}})
 
     # --- Lots ---
-    def get_all_lots(self, part_id: str = None):
-        query = {"part_id": part_id} if part_id else {}
-        lots = self.lot_repo.find_all(query, sort_by=[("created_at", -1)])
-        for lot in lots:
-            if lot.get("part_id"):
-                p = self.part_repo.find_by_id(lot["part_id"])
-                lot["part_code"] = p["part_code"] if p else None
-                lot["part_name"] = p["part_name"] if p else None
-            if lot.get("vendor_id"):
-                v = self.vendor_repo.find_by_id(lot["vendor_id"])
-                lot["vendor_name"] = v["vendor_name"] if v else None
+    def get_all_lots(self, part_id: str = None, org_id: str = "ORG-001"):
+        from app.config.database import Database
+        db = Database.get_db()
+        if db is None:
+            return []
+
+        query = {"organization_id": org_id, "quantity": {"$gt": 0}}
+        if part_id:
+            matched_item = db.items.find_one({
+                "organization_id": org_id,
+                "$or": [{"_id": part_id}, {"code": part_id}, {"part_number": part_id}]
+            })
+            if matched_item:
+                item_id_val = matched_item["_id"]
+                item_code_val = matched_item.get("code")
+                query["$or"] = [
+                    {"item_id": item_id_val},
+                    {"part_id": item_id_val},
+                    {"item_id": item_code_val},
+                    {"part_id": item_code_val},
+                    {"item_code": item_code_val},
+                    {"part_code": item_code_val}
+                ]
+            else:
+                query["$or"] = [
+                    {"item_id": part_id},
+                    {"part_id": part_id},
+                    {"item_code": part_id},
+                    {"part_code": part_id}
+                ]
+
+        pipeline = [
+            {"$match": query},
+            {
+                "$group": {
+                    "_id": {
+                        "lot_number": {"$ifNull": ["$lot_number", "STANDARD"]},
+                        "item_id": "$item_id"
+                    },
+                    "total_quantity": {"$sum": "$quantity"},
+                    "available_quantity": {"$sum": {"$ifNull": ["$available_quantity", "$quantity"]}},
+                    "vendor_id": {"$first": "$vendor_id"},
+                    "location_ids": {"$addToSet": "$location_id"},
+                    "created_at": {"$min": "$created_at"}
+                }
+            },
+            {"$sort": {"_id.lot_number": 1}}
+        ]
+
+        items_cache = {i["_id"]: i for i in db.items.find({"organization_id": org_id})}
+        vendors_cache = {v["_id"]: v for v in db.vendors.find({"organization_id": org_id})}
+        locations_cache = {l["_id"]: l for l in db.locations.find({"organization_id": org_id})}
+
+        lots = []
+        for agg in db.inventory.aggregate(pipeline):
+            lot_num = agg["_id"]["lot_number"]
+            item_id = agg["_id"]["item_id"]
+            item = items_cache.get(item_id)
+            vendor = vendors_cache.get(agg.get("vendor_id"))
+            loc_ids = agg.get("location_ids", [])
+            loc_codes = [
+                locations_cache[lid].get("location_code") or locations_cache[lid].get("code") or lid
+                for lid in loc_ids if lid in locations_cache
+            ]
+            primary_loc_code = loc_codes[0] if loc_codes else ""
+            primary_loc_id = loc_ids[0] if loc_ids else None
+
+            lots.append({
+                "_id": lot_num,
+                "lot_id": lot_num,
+                "lot_batch_no": lot_num,
+                "lot_number": lot_num,
+                "part_id": item_id,
+                "item_id": item_id,
+                "part_code": item.get("code") if item else item_id,
+                "item_code": item.get("code") if item else item_id,
+                "part_name": item.get("name") if item else "",
+                "item_name": item.get("name") if item else "",
+                "vendor_id": agg.get("vendor_id"),
+                "vendor_name": vendor.get("name") or vendor.get("vendor_name") if vendor else None,
+                "location_id": primary_loc_id,
+                "location_code": primary_loc_code,
+                "location_ids": loc_ids,
+                "locations": loc_codes,
+                "quantity": agg.get("total_quantity", 0),
+                "available_quantity": agg.get("available_quantity", agg.get("total_quantity", 0)),
+                "received_date": agg.get("created_at", "")[:10] if agg.get("created_at") else "",
+                "created_at": agg.get("created_at")
+            })
+
         return lots
 
-    def get_lot_by_id(self, lot_id: str):
-        lot = self.lot_repo.find_by_id(lot_id)
-        if not lot:
-            raise ValueError(f"Lot {lot_id} not found")
-        if lot.get("part_id"):
-            p = self.part_repo.find_by_id(lot["part_id"])
-            lot["part_code"] = p["part_code"] if p else None
-            lot["part_name"] = p["part_name"] if p else None
-        if lot.get("vendor_id"):
-            v = self.vendor_repo.find_by_id(lot["vendor_id"])
-            lot["vendor_name"] = v["vendor_name"] if v else None
-        return lot
+    def get_lot_by_id(self, lot_id: str, org_id: str = "ORG-001"):
+        lots = self.get_all_lots(org_id=org_id)
+        for l in lots:
+            if l.get("lot_batch_no") == lot_id or l.get("_id") == lot_id or l.get("lot_number") == lot_id:
+                return l
+        raise ValueError(f"Lot '{lot_id}' not found")
 
     def create_lot(self, data: dict, session=None):
-        part = self.part_repo.find_by_id(data["part_id"], session=session)
-        if not part:
-            raise ValueError(f"Part {data['part_id']} does not exist")
-
         batch_no = data["lot_batch_no"].strip()
-        existing = self.lot_repo.find_by_part_and_batch(data["part_id"], batch_no, session=session)
-        if existing:
-            return existing
-
-        lot_id = SequenceCounter.get_next_id("lot", session=session)
-        doc = {
-            "_id": lot_id,
-            "part_id": data["part_id"],
+        part_id = data.get("part_id") or data.get("item_id")
+        return {
+            "_id": batch_no,
+            "part_id": part_id,
+            "item_id": part_id,
             "lot_batch_no": batch_no,
-            "vendor_id": data.get("vendor_id") or part.get("vendor_id"),
-            "dop": data.get("dop"),
-            "manufacturing_date": data.get("manufacturing_date"),
-            "received_date": data.get("received_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            "expiry_date": data.get("expiry_date")
+            "lot_number": batch_no,
+            "vendor_id": data.get("vendor_id"),
+            "received_date": data.get("received_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         }
-        self.lot_repo.insert_one(doc, session=session)
-        return doc
 
     # --- Bulk Import & Templates ---
     def generate_import_template(self, file_format: str = "csv"):
@@ -303,8 +436,8 @@ class PartService:
         dynamic_cols = []
         seen_keys = set()
         for f in all_fields:
-            key = f["field_key"]
-            if key not in seen_keys:
+            key = f.get("field_key") or f.get("key") or (f.get("field_name") or f.get("name", "")).strip().lower().replace(" ", "_")
+            if key and key not in seen_keys:
                 seen_keys.add(key)
                 dynamic_cols.append(f"attr_{key}")
 
@@ -620,8 +753,9 @@ class PartService:
             missing_required = []
 
             for field in pt_fields:
-                f_key = field["field_key"]
-                f_name = field["field_name"].strip().lower().replace(" ", "_")
+                f_key = field.get("field_key") or field.get("key") or (field.get("field_name") or field.get("name", "")).strip().lower().replace(" ", "_")
+                f_name = (field.get("field_name") or field.get("name") or f_key).strip().lower().replace(" ", "_")
+                display_name = field.get("field_name") or field.get("name") or f_key
                 # Look for attr_key, key, attr_name, or name in row
                 val = (
                     row_normalized.get(f"attr_{f_key}") or row_normalized.get(f_key) or
@@ -630,7 +764,7 @@ class PartService:
 
                 if val is not None and str(val).strip() != "":
                     # Cast based on data_type
-                    d_type = field.get("data_type", "STRING").upper()
+                    d_type = (field.get("data_type") or field.get("type") or "STRING").upper()
                     if d_type in ["NUMBER", "DECIMAL"]:
                         try:
                             num_val = float(val) if "." in str(val) else int(val)
@@ -642,7 +776,7 @@ class PartService:
                     else:
                         attributes[f_key] = str(val).strip()
                 elif field.get("required"):
-                    missing_required.append(f"{field['field_name']} ({f_key})")
+                    missing_required.append(f"{display_name} ({f_key})")
 
             # Collect any leftover attr_* columns
             for k, v in row_normalized.items():

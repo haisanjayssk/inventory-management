@@ -14,10 +14,14 @@ import VendorsView from '@/views/VendorsView.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import UsersView from '@/views/UsersView.vue'
+import IndentsView from '@/views/IndentsView.vue'
+import ProjectsView from '@/views/ProjectsView.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
   { path: '/', name: 'dashboard', component: DashboardView },
+  { path: '/projects', name: 'projects', component: ProjectsView },
+  { path: '/indents', name: 'indents', component: IndentsView },
   { path: '/stock-operations', name: 'stock-operations', component: StockOperationsView },
   { path: '/inventory', name: 'inventory', component: InventoryView },
   { path: '/cells', name: 'cells', component: CellsView },
