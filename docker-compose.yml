@@ -29,6 +29,12 @@ services:
       - JWT_SECRET_KEY=mes-jwt-secret-key-battery-electronic-2026
       - SECRET_KEY=mes-super-secret-production-inventory-key-2026
       - CORS_ORIGINS=*
+      - KEYCLOAK_URL=${KEYCLOAK_URL:-http://host.docker.internal:8080}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-mes-inventory}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-mes-frontend}
+      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET:-}
+      - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID:-mes-backend}
+      - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:?KEYCLOAK_ADMIN_CLIENT_SECRET is required}
     depends_on:
       - mongodb
 

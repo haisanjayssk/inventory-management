@@ -1,4 +1,5 @@
 from flask import Blueprint, request, g
+from marshmallow import ValidationError
 from app.schemas.validators import (
     UserLoginSchema, UserRegisterSchema, UserUpdateSchema, UserPasswordResetSchema
 )
@@ -20,17 +21,44 @@ def login():
     except Exception as e:
         return error_response("INVALID_CREDENTIALS", str(e), 401)
 
+@auth_bp.route("/refresh", methods=["POST"])
+def refresh():
+    data = request.get_json() or {}
+    refresh_token = data.get("refresh_token")
+    if not refresh_token:
+        return error_response("MISSING_TOKEN", "refresh_token is required", 400)
+    try:
+        result = auth_service.refresh_token(refresh_token)
+        return success_response(result, message="Token refreshed successfully")
+    except Exception as e:
+        return error_response("REFRESH_FAILED", str(e), 401)
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+    data = request.get_json() or {}
+    refresh_token = data.get("refresh_token")
+    if refresh_token:
+        auth_service.logout_keycloak(refresh_token)
+    return success_response(None, message="Logged out successfully")
+
+
 @auth_bp.route("/register", methods=["POST"])
 @jwt_required()
-@require_roles("ADMIN")
+@require_roles("ADMIN", "INVENTORY_MANAGER")
 def register():
     schema = UserRegisterSchema()
     try:
         data = schema.load(request.get_json() or {})
         result = auth_service.register(data, created_by=g.current_user["username"])
         return success_response(result, message="User registered successfully", status_code=201)
-    except Exception as e:
+    except ValidationError as e:
         return error_response("REGISTRATION_FAILED", str(e), 400)
+    except ValueError as e:
+        return error_response("REGISTRATION_FAILED", str(e), 400)
+    except PermissionError as e:
+        return error_response("REGISTRATION_FORBIDDEN", str(e), 403)
+    except Exception as e:
+        return error_response("REGISTRATION_FAILED", str(e), 500)
 
 @auth_bp.route("/me", methods=["GET"])
 @jwt_required()
@@ -76,6 +104,22 @@ def update_user(user_id):
     except Exception as e:
         return error_response("UPDATE_FAILED", str(e), 400)
 
+@auth_bp.route("/users/<string:user_id>/status", methods=["PUT"])
+@jwt_required()
+@require_roles("ADMIN")
+def set_user_status(user_id):
+    data = request.get_json() or {}
+    if not isinstance(data.get("active"), bool):
+        return error_response("VALIDATION_ERROR", "active must be a boolean", 400)
+    try:
+        if data["active"]:
+            user = auth_service.enable_user(user_id)
+        else:
+            user = auth_service.disable_user(user_id)
+        return success_response(user, message="User status updated successfully")
+    except Exception as e:
+        return error_response("UPDATE_FAILED", str(e), 400)
+
 @auth_bp.route("/users/<string:user_id>/password", methods=["PUT"])
 @jwt_required()
 @require_roles("ADMIN")
@@ -97,7 +141,7 @@ def delete_user(user_id):
         if g.current_user.get("user_id") == user_id:
             return error_response("FORBIDDEN", "Cannot deactivate your own administrator account", 400)
         result = auth_service.delete_user(user_id)
-        return success_response(result, message="User deactivated successfully")
+        return success_response(result, message="User deleted successfully")
     except Exception as e:
         return error_response("DELETION_FAILED", str(e), 400)
 

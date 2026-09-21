@@ -105,10 +105,6 @@ class Database:
             cls.db.transactions.create_index([("timestamp", DESCENDING)])
             cls.db.transactions.create_index([("transaction_type", ASCENDING)])
 
-            # 11. users
-            cls.db.users.create_index([("email", ASCENDING)], unique=True)
-            cls.db.users.create_index([("username", ASCENDING)], unique=True)
-
             logger.info("All MongoDB collection indexes verified and created successfully.")
         except Exception as e:
             logger.error(f"Error creating indexes: {e}")

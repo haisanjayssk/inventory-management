@@ -49,7 +49,18 @@ pip install -r requirements.txt
 # Run the Flask backend
 python run.py
 ```
-Backend will start on `http://127.0.0.1:5001`. On first run, it automatically seeds default accounts, part types, dynamic fields, EMS warehouse hierarchy, sample parts, and initial stock.
+Backend will start on `http://127.0.0.1:5001`. On first run, it seeds inventory reference data only. Application users, passwords, and roles are managed exclusively in Keycloak.
+
+Set these backend environment variables before starting the application:
+
+```bash
+KEYCLOAK_URL=http://localhost:8080
+KEYCLOAK_REALM=mes-inventory
+KEYCLOAK_CLIENT_ID=mes-frontend
+KEYCLOAK_CLIENT_SECRET=<existing mes-frontend secret, if configured>
+KEYCLOAK_ADMIN_CLIENT_ID=mes-backend
+KEYCLOAK_ADMIN_CLIENT_SECRET=<existing mes-backend secret>
+```
 
 #### 2. Frontend (Vue 3 + Vite)
 ```bash
@@ -72,16 +83,7 @@ docker-compose up --build
 
 ---
 
-## 🔑 Pre-configured Seed Accounts
-
-| Role | Username / Email | Password | Permissions |
-| :--- | :--- | :--- | :--- |
-| **Administrator** | `admin@mes.com` | `Admin@123` | Full Access & User Management |
-| **Inventory Manager** | `manager@mes.com` | `Manager@123` | Parts, Lots, Vendors, Reservations |
-| **Store Operator** | `operator@mes.com` | `Operator@123` | Stock Movements, Receive, Transfer, NFC |
-| **Quality Viewer** | `viewer@mes.com` | `Viewer@123` | Read-only Audit & Traceability |
-
-*(One-click account fill buttons are provided on the Login screen for fast testing).*
+User accounts must exist in the `mes-inventory` Keycloak realm with one of the existing realm roles: `ADMIN`, `INVENTORY_MANAGER`, `STORE_OPERATOR`, or `VIEWER`.
 
 ---
 

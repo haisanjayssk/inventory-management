@@ -18,3 +18,18 @@ class Config:
     MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "inventory_management_db")
 
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+
+    # Keycloak Configuration
+    KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080").rstrip("/")
+    KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "mes-inventory")
+    KEYCLOAK_CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "mes-frontend")
+    KEYCLOAK_CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
+    KEYCLOAK_ADMIN_CLIENT_ID = os.getenv("KEYCLOAK_ADMIN_CLIENT_ID", "mes-backend")
+    KEYCLOAK_ADMIN_CLIENT_SECRET = os.getenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "")
+    KEYCLOAK_ALGORITHM = os.getenv("KEYCLOAK_ALGORITHM", "RS256")
+
+    KEYCLOAK_JWKS_URL = os.getenv("KEYCLOAK_JWKS_URL", f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs")
+    KEYCLOAK_TOKEN_URL = os.getenv("KEYCLOAK_TOKEN_URL", f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token")
+    KEYCLOAK_LOGOUT_URL = os.getenv("KEYCLOAK_LOGOUT_URL", f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/logout")
+    KEYCLOAK_USERINFO_URL = os.getenv("KEYCLOAK_USERINFO_URL", f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo")
+

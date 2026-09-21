@@ -4,6 +4,7 @@ import authApi from '@/api/auth'
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: localStorage.getItem('mes_token') || null,
+    refreshToken: localStorage.getItem('mes_refresh_token') || null,
     user: JSON.parse(localStorage.getItem('mes_user') || 'null'),
     loading: false
   }),
@@ -21,22 +22,54 @@ export const useAuthStore = defineStore('auth', {
       this.loading = true
       try {
         const response = await authApi.login(usernameOrEmail, password)
-        const { token, user } = response.data
+        const { token, refresh_token, user } = response.data
         this.token = token
+        this.refreshToken = refresh_token || null
         this.user = user
         localStorage.setItem('mes_token', token)
+        if (refresh_token) {
+          localStorage.setItem('mes_refresh_token', refresh_token)
+        }
         localStorage.setItem('mes_user', JSON.stringify(user))
         return user
       } finally {
         this.loading = false
       }
     },
-    logout() {
+    async refreshSession() {
+      if (!this.refreshToken) {
+        throw new Error('No refresh token available')
+      }
+      const response = await authApi.refreshToken(this.refreshToken)
+      const { token, refresh_token, user } = response.data
+      this.token = token
+      if (refresh_token) {
+        this.refreshToken = refresh_token
+        localStorage.setItem('mes_refresh_token', refresh_token)
+      }
+      if (user) {
+        this.user = user
+        localStorage.setItem('mes_user', JSON.stringify(user))
+      }
+      localStorage.setItem('mes_token', token)
+      return token
+    },
+    async logout() {
+      if (this.refreshToken) {
+        try {
+          await authApi.logout(this.refreshToken)
+        } catch (e) {
+          // Ignore logout error and proceed to local cleanup
+        }
+      }
       this.token = null
+      this.refreshToken = null
       this.user = null
       localStorage.removeItem('mes_token')
+      localStorage.removeItem('mes_refresh_token')
       localStorage.removeItem('mes_user')
       window.location.href = '/login'
     }
   }
 })
+

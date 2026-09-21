@@ -1,6 +1,4 @@
-#!/bin/sh
-'''exec' "/Users/emslab/Documents/MES/code/inventory management/backend/venv/bin/python3" "$0" "$@"
-' '''
+#!/Users/r4/Documents/inventory-management/backend/venv/bin/python3.11
 # -*- coding: utf-8 -*-
 import re
 import sys

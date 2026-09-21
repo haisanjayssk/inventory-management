@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timezone
 from app.config.database import Database
 from app.models.counter import SequenceCounter
-from app.security.auth import hash_password
 from app.services.location_service import LocationService
 
 logger = logging.getLogger(__name__)
@@ -14,54 +13,7 @@ def seed_database():
 
     logger.info("Checking database seed status...")
 
-    # 1. Seed Users
-    if db.users.count_documents({}) == 0:
-        logger.info("Seeding default users...")
-        users = [
-            {
-                "_id": SequenceCounter.get_next_id("user"),
-                "username": "admin",
-                "email": "admin@mes.com",
-                "full_name": "System Administrator",
-                "password_hash": hash_password("Admin@123"),
-                "role": "ADMIN",
-                "active": True,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            },
-            {
-                "_id": SequenceCounter.get_next_id("user"),
-                "username": "manager",
-                "email": "manager@mes.com",
-                "full_name": "Inventory Manager",
-                "password_hash": hash_password("Manager@123"),
-                "role": "INVENTORY_MANAGER",
-                "active": True,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            },
-            {
-                "_id": SequenceCounter.get_next_id("user"),
-                "username": "operator",
-                "email": "operator@mes.com",
-                "full_name": "Store Operator",
-                "password_hash": hash_password("Operator@123"),
-                "role": "STORE_OPERATOR",
-                "active": True,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            },
-            {
-                "_id": SequenceCounter.get_next_id("user"),
-                "username": "viewer",
-                "email": "viewer@mes.com",
-                "full_name": "Audit & Quality Viewer",
-                "password_hash": hash_password("Viewer@123"),
-                "role": "VIEWER",
-                "active": True,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            }
-        ]
-        db.users.insert_many(users)
-
-    # 2. Seed Part Types & Dynamic Fields
+    # 1. Seed Part Types & Dynamic Fields
     if db.part_types.count_documents({}) == 0:
         logger.info("Seeding standard part types and dynamic fields...")
         part_types_config = [

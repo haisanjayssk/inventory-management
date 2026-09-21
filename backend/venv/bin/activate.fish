@@ -29,7 +29,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/Users/emslab/Documents/MES/code/inventory management/backend/venv"
+set -gx VIRTUAL_ENV "/Users/r4/Documents/inventory-management/backend/venv"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH

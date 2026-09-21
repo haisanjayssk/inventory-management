@@ -37,7 +37,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV="/Users/emslab/Documents/MES/code/inventory management/backend/venv"
+VIRTUAL_ENV="/Users/r4/Documents/inventory-management/backend/venv"
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"

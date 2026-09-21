@@ -93,7 +93,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { Cpu } from 'lucide-vue-next'
 
-const usernameOrEmail = ref('admin@mes.com')
+const usernameOrEmail = ref('admin')
 const password = ref('Admin@123')
 const loading = ref(false)
 
@@ -102,11 +102,13 @@ const toast = useToastStore()
 const router = useRouter()
 
 const demoAccounts = [
-  { name: 'Administrator', user: 'admin@mes.com', pass: 'Admin@123', role: 'ADMIN' },
-  { name: 'Inv. Manager', user: 'manager@mes.com', pass: 'Manager@123', role: 'MANAGER' },
-  { name: 'Store Operator', user: 'operator@mes.com', pass: 'Operator@123', role: 'OPERATOR' },
-  { name: 'Quality Viewer', user: 'viewer@mes.com', pass: 'Viewer@123', role: 'VIEWER' }
+  { name: 'Administrator', user: 'admin', pass: 'Admin@123', role: 'ADMIN' },
+  { name: 'Inv. Manager', user: 'inventory_manager', pass: 'Manager@123', role: 'MANAGER' },
+  { name: 'Store Operator', user: 'operator', pass: 'Operator@123', role: 'OPERATOR' },
+  { name: 'Quality Viewer', user: 'viewer', pass: 'Viewer@123', role: 'VIEWER' }
 ]
+
+
 
 const fillAccount = (acc) => {
   usernameOrEmail.value = acc.user

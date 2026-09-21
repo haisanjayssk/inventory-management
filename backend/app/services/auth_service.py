@@ -1,124 +1,147 @@
-from datetime import datetime, timezone
-from app.repositories.user_repository import UserRepository
-from app.models.counter import SequenceCounter
-from app.security.auth import hash_password, check_password, generate_token
+import logging
+
+import requests
+from flask import current_app
+
+from app.security.auth import decode_token, extract_role_from_payload
+from app.services.keycloak_admin_service import KeycloakAdminService
+
+
+logger = logging.getLogger(__name__)
+
 
 class AuthService:
     def __init__(self):
-        self.user_repo = UserRepository()
+        self.keycloak_admin = KeycloakAdminService()
 
     def login(self, username_or_email: str, password: str):
-        user = self.user_repo.find_by_username_or_email(username_or_email)
-        if not user or not check_password(password, user["password_hash"]):
-            raise ValueError("Invalid username/email or password")
-
-        if not user.get("active", True):
-            raise ValueError("User account is disabled")
-
-        token = generate_token(
-            user_id=user["_id"],
-            username=user["username"],
-            email=user["email"],
-            role=user["role"]
+        token_url = current_app.config.get("KEYCLOAK_TOKEN_URL") or (
+            f"{current_app.config['KEYCLOAK_URL'].rstrip('/')}/realms/"
+            f"{current_app.config['KEYCLOAK_REALM']}/protocol/openid-connect/token"
         )
-
-        return {
-            "token": token,
-            "user": {
-                "_id": user["_id"],
-                "username": user["username"],
-                "email": user["email"],
-                "full_name": user.get("full_name", user["username"]),
-                "role": user["role"]
-            }
+        payload = {
+            "client_id": current_app.config.get("KEYCLOAK_CLIENT_ID", "mes-frontend"),
+            "grant_type": "password",
+            "username": username_or_email,
+            "password": password,
+            "scope": "openid profile email",
         }
+        client_secret = current_app.config.get("KEYCLOAK_CLIENT_SECRET", "")
+        if client_secret:
+            payload["client_secret"] = client_secret
+
+        try:
+            response = requests.post(token_url, data=payload, timeout=10)
+        except requests.RequestException as exc:
+            raise ValueError(f"Keycloak authentication unavailable: {exc}") from exc
+        if response.status_code != 200:
+            try:
+                message = response.json().get("error_description", "Invalid credentials")
+            except ValueError:
+                message = "Invalid credentials"
+            raise ValueError(message)
+
+        token_data = response.json()
+        claims = decode_token(token_data["access_token"])
+        username = claims.get("preferred_username") or claims.get("username") or username_or_email
+        return {
+            "token": token_data["access_token"],
+            "refresh_token": token_data.get("refresh_token"),
+            "expires_in": token_data.get("expires_in"),
+            "user": self._user_from_claims(claims, username),
+        }
+
+    def refresh_token(self, refresh_token_str: str):
+        token_url = current_app.config.get("KEYCLOAK_TOKEN_URL") or (
+            f"{current_app.config['KEYCLOAK_URL'].rstrip('/')}/realms/"
+            f"{current_app.config['KEYCLOAK_REALM']}/protocol/openid-connect/token"
+        )
+        payload = {
+            "client_id": current_app.config.get("KEYCLOAK_CLIENT_ID", "mes-frontend"),
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token_str,
+        }
+        client_secret = current_app.config.get("KEYCLOAK_CLIENT_SECRET", "")
+        if client_secret:
+            payload["client_secret"] = client_secret
+        try:
+            response = requests.post(token_url, data=payload, timeout=10)
+            if response.status_code != 200:
+                raise ValueError(f"Token refresh failed ({response.status_code})")
+            token_data = response.json()
+            claims = decode_token(token_data["access_token"])
+            username = claims.get("preferred_username") or claims.get("username", "user")
+            return {
+                "token": token_data["access_token"],
+                "refresh_token": token_data.get("refresh_token", refresh_token_str),
+                "expires_in": token_data.get("expires_in"),
+                "user": self._user_from_claims(claims, username),
+            }
+        except requests.RequestException as exc:
+            raise ValueError(f"Failed to refresh session: {exc}") from exc
+
+    def logout_keycloak(self, refresh_token_str: str):
+        logout_url = current_app.config.get("KEYCLOAK_LOGOUT_URL") or (
+            f"{current_app.config['KEYCLOAK_URL'].rstrip('/')}/realms/"
+            f"{current_app.config['KEYCLOAK_REALM']}/protocol/openid-connect/logout"
+        )
+        payload = {
+            "client_id": current_app.config.get("KEYCLOAK_CLIENT_ID", "mes-frontend"),
+            "refresh_token": refresh_token_str,
+        }
+        client_secret = current_app.config.get("KEYCLOAK_CLIENT_SECRET", "")
+        if client_secret:
+            payload["client_secret"] = client_secret
+        try:
+            requests.post(logout_url, data=payload, timeout=10)
+        except requests.RequestException as exc:
+            logger.warning("Keycloak logout request failed: %s", exc)
+        return True
 
     def register(self, data: dict, created_by: str = "system"):
-        if self.user_repo.find_by_email(data["email"]):
-            raise ValueError(f"Email {data['email']} is already registered")
-        if self.user_repo.find_by_username(data["username"]):
-            raise ValueError(f"Username {data['username']} is already taken")
+        return self.keycloak_admin.create_user(
+            username=data["username"],
+            email=data["email"],
+            full_name=data.get("full_name", data["username"]),
+            password=data["password"],
+            role=data["role"],
+        )
 
-        user_id = SequenceCounter.get_next_id("user")
-        user_doc = {
-            "_id": user_id,
-            "username": data["username"].lower().strip(),
-            "email": data["email"].lower().strip(),
-            "full_name": data.get("full_name", data["username"]),
-            "password_hash": hash_password(data["password"]),
-            "role": data.get("role", "STORE_OPERATOR"),
-            "active": True,
-            "created_by": created_by
-        }
-        self.user_repo.insert_one(user_doc)
-        
-        user_clean = {k: v for k, v in user_doc.items() if k != "password_hash"}
-        return user_clean
-
-    def get_all_users(self, search: str = None, role: str = None, active: bool = None):
-        query = {}
+    def get_all_users(self, search=None, role=None, active=None):
+        users = [
+            self.keycloak_admin.get_user_representation(user["id"])
+            for user in self.keycloak_admin.list_users(search)
+        ]
         if role:
-            query["role"] = role.upper().strip()
+            users = [user for user in users if user["role"] == role.upper().strip()]
         if active is not None:
-            query["active"] = active
-        if search:
-            query["$or"] = [
-                {"username": {"$regex": search, "$options": "i"}},
-                {"email": {"$regex": search, "$options": "i"}},
-                {"full_name": {"$regex": search, "$options": "i"}}
-            ]
+            users = [user for user in users if user["active"] == active]
+        return sorted(users, key=lambda user: user.get("created_at") or "", reverse=True)
 
-        users = self.user_repo.find_all(query, sort_by=[("created_at", -1)])
-        sanitized = []
-        for u in users:
-            sanitized.append({k: v for k, v in u.items() if k != "password_hash"})
-        return sanitized
+    def get_user_by_id(self, user_id):
+        return self.keycloak_admin.get_user_representation(user_id)
 
-    def get_user_by_id(self, user_id: str):
-        user = self.user_repo.find_by_id(user_id)
-        if not user:
-            raise ValueError(f"User {user_id} not found")
-        return {k: v for k, v in user.items() if k != "password_hash"}
+    def update_user(self, user_id, data):
+        return self.keycloak_admin.update_user(user_id, data)
 
-    def update_user(self, user_id: str, data: dict):
-        user = self.user_repo.find_by_id(user_id)
-        if not user:
-            raise ValueError(f"User {user_id} not found")
+    def reset_password(self, user_id, new_password):
+        return self.keycloak_admin.reset_password(user_id, new_password)
 
-        update_set = {}
-        if "full_name" in data and data["full_name"]:
-            update_set["full_name"] = data["full_name"].strip()
-        if "email" in data and data["email"]:
-            new_email = data["email"].lower().strip()
-            existing = self.user_repo.find_by_email(new_email)
-            if existing and existing["_id"] != user_id:
-                raise ValueError(f"Email {new_email} is already taken by another user")
-            update_set["email"] = new_email
-        if "role" in data and data["role"]:
-            update_set["role"] = data["role"].upper().strip()
-        if "active" in data and data["active"] is not None:
-            update_set["active"] = bool(data["active"])
+    def enable_user(self, user_id):
+        return self.keycloak_admin.enable_user(user_id)
 
-        if update_set:
-            self.user_repo.update_one({"_id": user_id}, {"$set": update_set})
+    def disable_user(self, user_id):
+        return self.keycloak_admin.disable_user(user_id)
 
-        return self.get_user_by_id(user_id)
+    def delete_user(self, user_id):
+        return self.keycloak_admin.delete_user(user_id)
 
-    def reset_password(self, user_id: str, new_password: str):
-        user = self.user_repo.find_by_id(user_id)
-        if not user:
-            raise ValueError(f"User {user_id} not found")
-
-        new_hash = hash_password(new_password)
-        self.user_repo.update_one({"_id": user_id}, {"$set": {"password_hash": new_hash}})
-        return {"user_id": user_id, "message": "Password reset successfully"}
-
-    def delete_user(self, user_id: str):
-        user = self.user_repo.find_by_id(user_id)
-        if not user:
-            raise ValueError(f"User {user_id} not found")
-
-        # Soft delete / deactivate user
-        self.user_repo.update_one({"_id": user_id}, {"$set": {"active": False}})
-        return {"user_id": user_id, "message": "User account deactivated successfully"}
-
+    @staticmethod
+    def _user_from_claims(claims, username):
+        return {
+            "_id": claims.get("sub", username),
+            "username": username,
+            "email": claims.get("email") or "",
+            "full_name": claims.get("name") or claims.get("full_name") or username,
+            "role": extract_role_from_payload(claims),
+        }
